@@ -1,6 +1,6 @@
 # match-recorder
 
-Based on the [ITF Match Recorder by awest25](https://github.com/awest25/ITF-Match-Recorder). 
+Based on the [ITF Match Recorder by awest25](https://github.com/awest25/ITF-Match-Recorder). This version utilizes two Python scripts for recording live streams off of [PlaySight](https://playsight.com/). These scripts utilize [Selenium](https://www.selenium.dev/) for browser automation, [Beautiful Soup](https://www.crummy.com/software/BeautifulSoup/) for web scraping, and [FFmpeg](https://www.ffmpeg.org/) for live-stream recording . 
 
 ## Requirements
 - requests
@@ -54,5 +54,4 @@ To select the team you want to record, open the site_parser.py file and update t
 url = WEB_URL + "/facility/pepperdine-university/home" # <---- Change This line to team of your choice
 ```
 
-Run ```python3 site_parser.py``` then follow the prompts. Playsight account required
-  
+Run ```python3 site_parser.py``` then follow the prompts. You will be prompted to enter Playsig
