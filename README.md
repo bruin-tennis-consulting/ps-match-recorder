@@ -18,5 +18,12 @@ Ensure you have ffmpeg installed on your system. You can download it from [FFmpe
 ```bash
 brew install ffmpeg
 ```
+
+## Selecting team to record 
+To select the team you want to record, open the site_parser.py file and update the url variable:
+```python
+url = WEB_URL + "/facility/pepperdine-university/home" # <---- Change This line to team of your choice
+```
+
 Run ```python3 site_parser.py``` then follow the prompts. Playsight account required
   
