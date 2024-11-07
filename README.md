@@ -1,5 +1,7 @@
 # match-recorder
 
+Based on the [ITF Match Recorder by awest25](https://github.com/awest25/ITF-Match-Recorder). 
+
 ## Requirements
 - requests
 - beautifulsoup4
