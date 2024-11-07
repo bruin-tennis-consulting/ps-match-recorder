@@ -54,4 +54,4 @@ To select the team you want to record, open the site_parser.py file and update t
 url = WEB_URL + "/facility/pepperdine-university/home" # <---- Change This line to team of your choice
 ```
 
-Run ```python3 site_parser.py``` then follow the prompts. You will be prompted to enter Playsig
+Run python3 site_parser.py and follow the prompts. You will be asked to enter your PlaySight credentials, select a court to record, and choose the recording duration."
