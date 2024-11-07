@@ -13,7 +13,7 @@ import getpass
 
 BASE_URL = "https://playsight.com"
 WEB_URL = "https://web.playsight.com"
-url = WEB_URL + "/facility/danube-sports-world-paddle/home"
+url = WEB_URL + "/facility/danube-sports-world-paddle/home" #Change link for specific team
 
 
 def fetch_page(url):
