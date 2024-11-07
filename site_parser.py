@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from video_downloader import record_stream
 import time
 import json
-import webbrowser
+import getpass
 
 BASE_URL = "https://playsight.com"
 WEB_URL = "https://web.playsight.com"
@@ -34,6 +34,7 @@ def fetch_page(url):
     )
 
     driver.get(url)
+    print("\n Fetching page \n")
     time.sleep(6)  # Wait for the page to fully load (adjust as needed)
 
     html = driver.page_source
@@ -93,9 +94,12 @@ def sign_in(driver):
     time.sleep(3)
 
     # Ask the user for email and password
-    print("In order to record a stream please sign into PlaySight \n")
+    print("\n" + "=" * 50 + "\n")
+    print("Please sign into Playsight to record a stream")
+    print("\n" + "=" * 50 + "\n")
+
     email = input("Enter your email: ")
-    password = input("Enter your password: ")
+    password = getpass.getpass("Enter your password: ")
 
     # Find the input fields for the username and password
     email_field = driver.find_element(
@@ -114,6 +118,7 @@ def sign_in(driver):
         By.XPATH, '//button[@type="submit"]'
     )  # Adjust the XPath as needed
     login_button.click()
+    print("\nLogging in...\n")
     time.sleep(5)  # Wait for the login process to complete
 
 
@@ -157,7 +162,7 @@ if __name__ == "__main__":
         # User select match to record
         selected_match = select_match(videos)
         match_name, match_url = selected_match
-        print(f"Selected Match: {match_name}, URL: {match_url}")
+        print(f"Selected: {match_name}")
 
         # Navigate to stream
         driver.get(
@@ -168,6 +173,19 @@ if __name__ == "__main__":
         performance_logs = driver.get_log("performance")
         link = link_from_logs(performance_logs)
         output_file = "out/livestream_recording.mp4"
-        record_stream(link, output_file)
+        #Select recording time
+        recording_time = inquirer.select(
+            message="Select the recording duration:",
+            choices=[
+                "15 seconds",
+                "30 seconds",
+                "1 minute",
+                "15 minutes",
+                "1 hour",
+                "2 hours",
+                "3 hours",
+            ],
+        ).execute()
+        record_stream(link, output_file, recording_time)
 
         driver.quit()  # Close the driver after operation
