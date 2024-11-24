@@ -21,11 +21,15 @@ def record_stream(url, output, duration):
         "15 minutes": 15 * 60,
         "1 hour": 60 * 60,
         "2 hours": 2 * 60 * 60,
-        "3 hours": 3 * 60 * 60
+        "3 hours": 3 * 60 * 60,
+        "4 hours": 4 * 60 * 60,
+        "5 hours": 3 * 60 * 60,
     }
 
     # Get the duration in seconds
-    duration_seconds = time_mapping.get(duration, 15)  # Default to 15 seconds if not found
+    duration_seconds = time_mapping.get(
+        duration, 15
+    )  # Default to 15 seconds if not found
 
     # Convert seconds to HH:MM:SS format for ffmpeg
     time_str = str(timedelta(seconds=duration_seconds))
@@ -47,7 +51,6 @@ def record_stream(url, output, duration):
         print(f"Recording saved to {output}")
     except subprocess.CalledProcessError as e:
         print(f"Error recording livestream: {e}", file=sys.stderr)
-
 
 
 # Example usage

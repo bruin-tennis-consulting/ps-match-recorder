@@ -2,6 +2,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from selenium.webdriver.common.action_chains import ActionChains
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By  # Import By
 from InquirerPy import inquirer
@@ -13,7 +14,9 @@ import getpass
 
 BASE_URL = "https://playsight.com"
 WEB_URL = "https://web.playsight.com"
-url = WEB_URL + "/facility/danube-sports-world-paddle/home" #Change link for specific team
+url = (
+    WEB_URL + "/facility/grand-rapids-racquet-and-fitness/home"
+)  # Change link for specific team
 
 
 def fetch_page(url):
@@ -124,8 +127,8 @@ def sign_in(driver):
 
 # Extract stream link
 def link_from_logs(logs):
-    # Iterate through the logs to find the first .m3u8 URL
-    for entry in logs:
+    # Iterate through the logs to find the latest .m3u8 URL
+    for entry in reversed(logs):
         try:
             # Attempt to parse the log entry's message (which may not always be valid JSON)
             log_message = json.loads(entry["message"])
@@ -149,7 +152,58 @@ def link_from_logs(logs):
         except Exception as e:
             print(f"Unexpected error: {e} - Skipping entry.")
 
-    return None  # Return None if no .m3u8 URL is found
+    return None
+
+
+def check_and_select_camera_angle(driver):
+    try:
+
+        time.sleep(5)
+
+        # Find the camera-angles div
+        camera_angles_div = driver.find_element(By.CLASS_NAME, "camera-angles")
+        if camera_angles_div:
+            print("Camera angles detected. Preparing options...")
+
+            # Extract all figure tags inside the camera-angles div
+            figure_tags = camera_angles_div.find_elements(By.TAG_NAME, "figure")
+
+            # Collect names from each figure tag
+            angles = []
+            for figure in figure_tags:
+                description_div = figure.find_element(By.CLASS_NAME, "description")
+                if description_div:
+                    angles.append(description_div.text.strip())
+
+            # If descriptions are found, prompt the user to select one
+            if angles:
+                selected_angle = inquirer.select(
+                    message="Select a camera angle:",
+                    choices=angles,
+                ).execute()
+
+                # Find and click the selected angle
+                for figure in figure_tags:
+                    description_div = figure.find_element(By.CLASS_NAME, "description")
+                    if (
+                        description_div
+                        and description_div.text.strip() == selected_angle
+                    ):
+                        ActionChains(driver).move_to_element(figure).click(
+                            figure
+                        ).perform()
+                        print(f"Selected camera angle: {selected_angle}")
+                        time.sleep(3)  # Allow the view to update
+                        return True  # Successfully selected an angle
+            else:
+                print("No camera angle descriptions available.")
+                return False
+        else:
+            print("No camera angles available.")
+            return False
+    except Exception as e:
+        print(f"Error checking/selecting camera angles: {e}")
+        return False
 
 
 if __name__ == "__main__":
@@ -168,12 +222,24 @@ if __name__ == "__main__":
         driver.get(
             "https://web.playsight.com" + match_url
         )  # Make sure you use the full URL if 'match_url' is just a relative path
+
+        check_and_select_camera_angle(driver)
+
         time.sleep(10)
+
         # Capture performance logs to extract .m3u8
         performance_logs = driver.get_log("performance")
         link = link_from_logs(performance_logs)
-        output_file = "out/livestream_recording.mp4"
-        #Select recording time
+
+        # Promp user to name video
+        output_file_name = inquirer.text(
+            message="Enter the name for the output file (without extension):",
+            validate=lambda text: len(text) > 0 or "File name cannot be empty.",
+        ).execute()
+
+        output_file = f"out/{output_file_name}.mp4"
+
+        # Select recording time
         recording_time = inquirer.select(
             message="Select the recording duration:",
             choices=[
@@ -184,8 +250,11 @@ if __name__ == "__main__":
                 "1 hour",
                 "2 hours",
                 "3 hours",
+                "4 hours",
+                "5 hours",
             ],
         ).execute()
+
         record_stream(link, output_file, recording_time)
 
         driver.quit()  # Close the driver after operation
