@@ -1,5 +1,10 @@
-requests
 beautifulsoup4
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
 InquirerPy
-selenium 
+python-dateutil
+requests
+selenium
 webdriver_manager
+yt-dlp

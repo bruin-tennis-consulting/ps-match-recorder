@@ -1,0 +1,6 @@
+__pycache__/
+config/youtube_client_secrets.json
+config/youtube_token.json
+launchd/
+logs/
+recordings/
