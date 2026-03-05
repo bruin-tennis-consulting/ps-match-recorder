@@ -15,8 +15,8 @@
   "ffmpeg_path": "ffmpeg",
   "youtube": {
     "enabled": false,
-    "client_secrets_file": "config/youtube_client_secrets.json",
-    "token_file": "config/youtube_token.json",
+    "client_secrets_file": "youtube_client_secrets.json",
+    "token_file": "youtube_token.json",
     "privacy_status": "unlisted",
     "category_id": "17",
     "title_template": "{match_title} | {start_date}",

@@ -15,8 +15,8 @@
   "ffmpeg_path": "ffmpeg",
   "youtube": {
     "enabled": true,
-    "client_secrets_file": "config/youtube_client_secrets.json",
-    "token_file": "config/youtube_token.json",
+    "client_secrets_file": "youtube_client_secrets.json",
+    "token_file": "youtube_token.json",
     "privacy_status": "unlisted",
     "category_id": "17",
     "title_template": "{match_title} | {start_date}",
@@ -46,12 +46,20 @@
         "Purdue streams home men's tennis matches through its PlaySight facility page."
       ]
     },
+    "2026-03-06_ohio-state-vs-baylor": {
+      "stream_page_url": "https://web.playsight.com/facility/baylor-university/home",
+      "notes": [
+        "Baylor's tennis stream directory links to the PlaySight facility page.",
+        "Using the facility page allows multi-court discovery (e.g., courts 101-107) and parallel recording."
+      ]
+    },
     "2026-03-03_michigan-state-vs-arizona": {
-      "stream_page_url": "https://arizonawildcats.com/sports/2020/1/14/tennis-live-streaming",
+      "stream_page_url": "https://web.playsight.com/live/university-of-arizona/101",
       "timezone": "America/Phoenix",
       "duration_minutes": 300,
       "notes": [
-        "Arizona Athletics lists this match on 2026-03-03 at 1:00 PM MST, which is 12:00 PM PST."
+        "Arizona Athletics lists this match on 2026-03-03 at 1:00 PM MST, which is 12:00 PM PST.",
+        "Temporary direct court override for the live Arizona match to avoid slow multi-court discovery during the active recording window."
       ]
     },
     "2026-03-08_ucla-vs-purdue": {

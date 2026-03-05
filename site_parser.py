@@ -60,6 +60,11 @@ DEFAULT_CONFIG = {
     "match_overrides": {},
 }
 DIRECT_STREAM_SUFFIXES = (".m3u8", ".mp4", ".mpd")
+PLAYSIGHT_LINK_PATTERN = re.compile(
+    r"https?://[^\s\"'<>]*playsight\.com/(?:live|livestreaming|facility)/[^\s\"'<>]+",
+    re.IGNORECASE,
+)
+URL_ATTRIBUTE_KEYS = ("href", "src", "data-src", "data-href", "data-url")
 MONTH_PATTERN = (
     r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
     r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|"
@@ -71,9 +76,6 @@ MATCHUP_PATTERN = re.compile(
     r"(vs\.?|at)\s+"
     r"([A-Za-z0-9.'&()/-]+(?:\s+[A-Za-z0-9.'&()/-]+){0,5})"
 )
-
-PLAYSIGHT_EMAIL = "Playsight@ucla.edu"
-PLAYSIGHT_PASSWORD = "UCLAtennis2025*"
 
 
 @dataclass
@@ -136,6 +138,11 @@ class StreamTarget:
     label: str
     page_url: str
     media_url: str
+
+
+def log_status(message: str) -> None:
+    timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    print(f"[{timestamp}] {message}", flush=True)
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -228,7 +235,7 @@ def is_playsight_facility_or_multi_page(url: str | None) -> bool:
     if not is_playsight_url(url):
         return False
     path = urlparse(url or "").path.lower()
-    return "/facility/" in path or "/live/" in path
+    return "/facility/" in path or "/live/" in path or "/livestreaming/" in path
 
 
 def parse_datetime(value: str, timezone_name: str) -> datetime | None:
@@ -829,8 +836,12 @@ def fetch_page_links(url: str, config: dict[str, Any]) -> list[str]:
 
     soup = BeautifulSoup(html, "html.parser")
     ranked_links: list[tuple[int, str]] = []
-    for link in soup.find_all("a", href=True):
-        absolute = urljoin(url, link["href"])
+    seen_links: set[str] = set()
+
+    def maybe_add(candidate: str) -> None:
+        absolute = urljoin(url, candidate.strip())
+        if absolute in seen_links:
+            return
         lowered = absolute.lower()
         score = 0
         if "playsight" in lowered:
@@ -842,6 +853,16 @@ def fetch_page_links(url: str, config: dict[str, Any]) -> list[str]:
             score += 2
         if score:
             ranked_links.append((score, absolute))
+            seen_links.add(absolute)
+
+    for tag in soup.find_all(True):
+        for attr in URL_ATTRIBUTE_KEYS:
+            value = tag.get(attr)
+            if isinstance(value, str):
+                maybe_add(value)
+
+    for match in PLAYSIGHT_LINK_PATTERN.findall(html):
+        maybe_add(match)
 
     ranked_links.sort(reverse=True)
     deduped = list(dict.fromkeys(link for _, link in ranked_links))
@@ -858,7 +879,9 @@ def extract_court_label(text: str, fallback: str) -> str:
     return fallback
 
 
-def extract_playsight_watch_pages(page_url: str, config: dict[str, Any]) -> list[tuple[str, str]]:
+def extract_playsight_candidates(
+    page_url: str, config: dict[str, Any]
+) -> list[tuple[str, str]]:
     try:
         html = fetch_html(page_url, config)
     except Exception:
@@ -868,44 +891,84 @@ def extract_playsight_watch_pages(page_url: str, config: dict[str, Any]) -> list
             return []
 
     soup = BeautifulSoup(html, "html.parser")
+    default_label = extract_court_label(soup.get_text(" ", strip=True), "Main Court")
     candidates: list[tuple[str, str]] = []
-    default_label = extract_court_label(
-        soup.get_text(" ", strip=True), "Main Court")
+    seen_urls: set[str] = set()
+
+    def add_candidate(raw_url: str, label_hint: str = "") -> None:
+        absolute = urljoin(page_url, raw_url.strip()).strip()
+        if not absolute or absolute in seen_urls:
+            return
+        if not is_playsight_url(absolute):
+            return
+        path = urlparse(absolute).path.lower()
+        if (
+            "/live/" not in path
+            and "/livestreaming/" not in path
+            and "/facility/" not in path
+        ):
+            return
+
+        normalized_hint = normalize_text(label_hint)
+        label = extract_court_label(normalized_hint, normalized_hint)
+        if not label:
+            label = extract_court_label(absolute, default_label)
+
+        candidates.append((label or default_label, absolute))
+        seen_urls.add(absolute)
+
+    for tag in soup.find_all(True):
+        label_hint = normalize_text(
+            " ".join(
+                value
+                for value in (
+                    tag.get_text(" ", strip=True),
+                    tag.get("title"),
+                    tag.get("aria-label"),
+                    tag.get("data-label"),
+                    tag.get("alt"),
+                )
+                if isinstance(value, str) and normalize_text(value)
+            )
+        )
+        for attribute_key in URL_ATTRIBUTE_KEYS:
+            attribute_value = tag.get(attribute_key)
+            if isinstance(attribute_value, str):
+                add_candidate(attribute_value, label_hint)
+
+    for matched_url in PLAYSIGHT_LINK_PATTERN.findall(html):
+        add_candidate(matched_url, matched_url)
+
+    return candidates
+
+
+def extract_embedded_playsight_facility_pages(
+    page_url: str, config: dict[str, Any]
+) -> list[str]:
+    facility_pages: list[str] = []
+    seen_urls: set[str] = set()
+    for _, candidate_url in extract_playsight_candidates(page_url, config):
+        if "/facility/" not in urlparse(candidate_url).path.lower():
+            continue
+        if candidate_url in seen_urls:
+            continue
+        facility_pages.append(candidate_url)
+        seen_urls.add(candidate_url)
+    return facility_pages
+
+
+def extract_playsight_watch_pages(page_url: str, config: dict[str, Any]) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    default_label = "Main Court"
 
     if "/live/" in urlparse(page_url).path.lower():
         candidates.append((default_label, page_url))
 
-    seen_live_links: set[str] = set()
-    for link in soup.find_all("a", href=True):
-        href = urljoin(page_url, link["href"])
-        lowered_href = href.lower()
-        anchor_text = normalize_text(link.get_text(" ", strip=True))
-
-        if not is_playsight_url(href):
+    for label, href in extract_playsight_candidates(page_url, config):
+        href_path = urlparse(href).path.lower()
+        if "/live/" not in href_path and "/livestreaming/" not in href_path:
             continue
-        if "/live/" not in urlparse(href).path.lower():
-            continue
-        if href in seen_live_links:
-            continue
-        if "watch" not in anchor_text.lower() and "/facility/" not in urlparse(page_url).path.lower():
-            continue
-
-        container = link
-        label = anchor_text or default_label
-        for _ in range(4):
-            container_text = normalize_text(
-                container.get_text(" ", strip=True))
-            candidate_label = extract_court_label(container_text, "")
-            if candidate_label:
-                label = candidate_label
-                break
-            parent = getattr(container, "parent", None)
-            if parent is None:
-                break
-            container = parent
-
         candidates.append((label or default_label, href))
-        seen_live_links.add(href)
 
     deduped: list[tuple[str, str]] = []
     seen_urls: set[str] = set()
@@ -915,6 +978,24 @@ def extract_playsight_watch_pages(page_url: str, config: dict[str, Any]) -> list
         deduped.append((label, href))
         seen_urls.add(href)
     return deduped
+
+
+def extract_embedded_stream_targets(
+    page_url: str, config: dict[str, Any]
+) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    seen_urls: set[str] = set()
+
+    for label, href in extract_playsight_candidates(page_url, config):
+        path = urlparse(href).path.lower()
+        if "/live/" not in path and "/livestreaming/" not in path:
+            continue
+        if href in seen_urls:
+            continue
+        candidates.append((label, href))
+        seen_urls.add(href)
+
+    return candidates
 
 
 def extract_media_url_with_yt_dlp(page_url: str) -> str | None:
@@ -958,22 +1039,93 @@ def sign_into_playsight_if_needed(driver: Any, page_url: str) -> None:
     email = os.getenv("PLAYSIGHT_EMAIL")
     password = os.getenv("PLAYSIGHT_PASSWORD")
     if not email or not password:
+        log_status("No Playsight credentials in environment. Continuing without login.")
         return
 
     from selenium.webdriver.common.by import By
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.support.ui import WebDriverWait
 
-    try:
-        email_field = driver.find_element(
-            By.XPATH, '//input[@type="email" and @autocomplete="email"]'
-        )
-        password_field = driver.find_element(
-            By.XPATH, '//input[@type="password" and @autocomplete="current-password"]'
-        )
-        submit_button = driver.find_element(
-            By.XPATH, '//button[@type="submit"]')
-    except Exception:
+    wait = WebDriverWait(driver, 10)
+
+    def find_login_form_fields() -> tuple[Any, Any, Any] | None:
+        email_locators = [
+            (By.XPATH, '//input[@type="email" and @autocomplete="email"]'),
+            (By.XPATH, '//input[@type="email"]'),
+            (By.XPATH, '//input[contains(@name, "email")]'),
+        ]
+        password_locators = [
+            (By.XPATH, '//input[@type="password" and @autocomplete="current-password"]'),
+            (By.XPATH, '//input[@type="password"]'),
+        ]
+        submit_locators = [
+            (By.XPATH, '//button[@type="submit"]'),
+            (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "sign in")]'),
+            (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "log in")]'),
+        ]
+
+        email_field = None
+        password_field = None
+        submit_button = None
+
+        for locator in email_locators:
+            try:
+                email_field = wait.until(EC.presence_of_element_located(locator))
+                break
+            except Exception:
+                continue
+
+        for locator in password_locators:
+            try:
+                password_field = wait.until(EC.presence_of_element_located(locator))
+                break
+            except Exception:
+                continue
+
+        for locator in submit_locators:
+            try:
+                submit_button = wait.until(EC.element_to_be_clickable(locator))
+                break
+            except Exception:
+                continue
+
+        if email_field and password_field and submit_button:
+            return email_field, password_field, submit_button
+        return None
+
+    login_fields = find_login_form_fields()
+    if login_fields is None:
+        sign_in_locators = [
+            (By.XPATH, '//a[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "sign in")]'),
+            (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "sign in")]'),
+            (By.XPATH, '//a[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "log in")]'),
+            (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "log in")]'),
+            (By.XPATH, '//a[contains(@href, "/auth")]'),
+            (By.XPATH, '//button[contains(@aria-label, "sign in")]'),
+        ]
+
+        clicked_sign_in = False
+        for locator in sign_in_locators:
+            try:
+                sign_in_button = wait.until(EC.element_to_be_clickable(locator))
+                log_status(f"Clicking Playsight sign-in control on {page_url}")
+                driver.execute_script("arguments[0].click();", sign_in_button)
+                clicked_sign_in = True
+                break
+            except Exception:
+                continue
+
+        if clicked_sign_in:
+            time.sleep(2)
+            login_fields = find_login_form_fields()
+
+    if login_fields is None:
+        log_status("No Playsight login form detected on page.")
         return
 
+    email_field, password_field, submit_button = login_fields
+
+    log_status(f"Signing into Playsight for {page_url}")
     email_field.clear()
     email_field.send_keys(email)
     password_field.clear()
@@ -982,6 +1134,7 @@ def sign_into_playsight_if_needed(driver: Any, page_url: str) -> None:
     time.sleep(5)
     driver.get(page_url)
     time.sleep(5)
+    log_status("Playsight sign-in submitted.")
 
 
 def extract_media_url_with_playsight(page_url: str) -> str | None:
@@ -1002,11 +1155,13 @@ def extract_media_url_with_playsight(page_url: str) -> str | None:
         options=options,
     )
     try:
+        log_status(f"Opening Playsight page: {page_url}")
         driver.get(page_url)
         sign_into_playsight_if_needed(driver, page_url)
-        deadline = time.time() + 25
+        deadline = time.time() + 45
         while time.time() < deadline:
-            for entry in reversed(driver.get_log("performance")):
+            entries = driver.get_log("performance")
+            for entry in reversed(entries):
                 try:
                     message = json.loads(entry["message"])
                     inner = message.get("message", {})
@@ -1015,12 +1170,23 @@ def extract_media_url_with_playsight(page_url: str) -> str | None:
                     response = inner.get("params", {}).get("response", {})
                     url = response.get("url", "")
                     if ".m3u8" in url or ".mpd" in url or ".mp4" in url:
+                        log_status(f"Resolved Playsight media URL for {page_url}")
                         return url
                 except Exception:
                     continue
+            for entry in reversed(entries):
+                message = entry.get("message", "")
+                media_match = re.search(
+                    r"https?://[^\"' ]+\.(?:m3u8|mpd|mp4)[^\"' ]*",
+                    message,
+                )
+                if media_match:
+                    log_status(f"Resolved Playsight media URL for {page_url}")
+                    return media_match.group(0)
             time.sleep(2)
     finally:
         driver.quit()
+    log_status(f"No media URL found on Playsight page: {page_url}")
     return None
 
 
@@ -1045,13 +1211,71 @@ def resolve_stream_targets(page_url: str, config: dict[str, Any]) -> list[Stream
         return []
 
     if page_url.lower().endswith(DIRECT_STREAM_SUFFIXES):
+        log_status(f"Using direct media URL: {page_url}")
         return [StreamTarget(label="Main Court", page_url=page_url, media_url=page_url)]
+
+    parsed_path = urlparse(page_url).path.lower()
+    if is_playsight_url(page_url) and ("/live/" in parsed_path or "/livestreaming/" in parsed_path):
+        log_status(f"Resolving direct Playsight court page first: {page_url}")
+        resolved = resolve_stream_url(page_url, config)
+        if resolved:
+            label = extract_court_label(page_url, "Main Court")
+            log_status(f"Resolved direct Playsight target {label}: {page_url}")
+            return [StreamTarget(label=label, page_url=page_url, media_url=resolved)]
+        log_status(f"Direct Playsight page did not yield media URL yet: {page_url}")
+
+    embedded_facility_pages = extract_embedded_playsight_facility_pages(
+        page_url, config
+    )
+    if embedded_facility_pages:
+        log_status(
+            f"Found {len(embedded_facility_pages)} embedded Playsight facility link(s) on {page_url}"
+        )
+        for facility_page in embedded_facility_pages:
+            watch_pages = extract_playsight_watch_pages(facility_page, config)
+            if not watch_pages:
+                continue
+            log_status(
+                f"Found {len(watch_pages)} Playsight watch page(s) on {facility_page}"
+            )
+            resolved_targets: list[StreamTarget] = []
+            for label, watch_page in watch_pages:
+                log_status(f"Resolving Playsight watch page {label}: {watch_page}")
+                media_url = resolve_stream_url(watch_page, config, depth=1)
+                if media_url:
+                    resolved_targets.append(
+                        StreamTarget(label=label, page_url=watch_page, media_url=media_url)
+                    )
+            if resolved_targets:
+                log_status(
+                    f"Resolved {len(resolved_targets)} live stream target(s) from {facility_page}"
+                )
+                return uniquify_stream_targets(resolved_targets)
+
+    embedded_targets = extract_embedded_stream_targets(page_url, config)
+    if embedded_targets:
+        log_status(
+            f"Found {len(embedded_targets)} embedded Playsight court links on {page_url}"
+        )
+        resolved_targets: list[StreamTarget] = []
+        for label, watch_page in embedded_targets:
+            log_status(f"Resolving embedded stream target {label}: {watch_page}")
+            media_url = resolve_stream_url(watch_page, config, depth=1)
+            if media_url:
+                resolved_targets.append(
+                    StreamTarget(label=label, page_url=watch_page, media_url=media_url)
+                )
+        if resolved_targets:
+            log_status(f"Resolved {len(resolved_targets)} live stream target(s) from {page_url}")
+            return uniquify_stream_targets(resolved_targets)
 
     if is_playsight_facility_or_multi_page(page_url):
         watch_pages = extract_playsight_watch_pages(page_url, config)
         if watch_pages:
+            log_status(f"Found {len(watch_pages)} Playsight watch page(s) on {page_url}")
             resolved_targets: list[StreamTarget] = []
             for label, watch_page in watch_pages:
+                log_status(f"Resolving Playsight watch page {label}: {watch_page}")
                 media_url = resolve_stream_url(watch_page, config, depth=1)
                 if media_url:
                     resolved_targets.append(
@@ -1059,15 +1283,18 @@ def resolve_stream_targets(page_url: str, config: dict[str, Any]) -> list[Stream
                             label=label, page_url=watch_page, media_url=media_url)
                     )
             if resolved_targets:
+                log_status(f"Resolved {len(resolved_targets)} live stream target(s) from {page_url}")
                 return uniquify_stream_targets(resolved_targets)
 
     resolved = resolve_stream_url(page_url, config)
     if not resolved:
+        log_status(f"No live stream target resolved from {page_url}")
         return []
 
     label = "Main Court"
     if is_playsight_url(page_url):
         label = extract_court_label(page_url, "Main Court")
+    log_status(f"Resolved single stream target {label}: {page_url}")
     return [StreamTarget(label=label, page_url=page_url, media_url=resolved)]
 
 
@@ -1079,7 +1306,8 @@ def resolve_stream_url(page_url: str, config: dict[str, Any], depth: int = 0) ->
     if lowered.endswith(DIRECT_STREAM_SUFFIXES):
         return page_url
 
-    if is_playsight_url(page_url) and "/live/" in urlparse(page_url).path.lower():
+    path = urlparse(page_url).path.lower()
+    if is_playsight_url(page_url) and ("/live/" in path or "/livestreaming/" in path):
         resolved = extract_media_url_with_playsight(page_url)
         if resolved:
             return resolved
@@ -1092,7 +1320,7 @@ def resolve_stream_url(page_url: str, config: dict[str, Any], depth: int = 0) ->
 
     for resolver in (
         lambda: extract_media_url_with_requests(page_url, config),
-        lambda: extract_media_url_with_yt_dlp(page_url),
+        lambda: None if is_playsight_url(page_url) else extract_media_url_with_yt_dlp(page_url),
     ):
         resolved = resolver()
         if resolved:
@@ -1120,18 +1348,37 @@ def wait_for_live_streams(match: MatchRecord, config: dict[str, Any]) -> list[St
     now = datetime.now(ZoneInfo(match.timezone))
     start_dt = match.start_datetime().astimezone(ZoneInfo(match.timezone))
     window_start = start_dt - timedelta(minutes=config["lead_time_minutes"])
+    log_status(
+        f"Preparing recording for {match.match_id} ({match.title}) scheduled at {start_dt.isoformat()}"
+    )
     if now < window_start:
         seconds_until_start = (window_start - now).total_seconds()
         if seconds_until_start > 0:
+            log_status(
+                f"Waiting until lead window opens at {window_start.isoformat()} "
+                f"({int(seconds_until_start)} seconds)"
+            )
             time.sleep(seconds_until_start)
 
     deadline = start_dt + timedelta(minutes=config["stream_retry_minutes"])
+    attempt = 1
     while datetime.now(ZoneInfo(match.timezone)) <= deadline:
+        log_status(
+            f"Polling for live stream targets (attempt {attempt}) from {match.stream_page_url}"
+        )
         resolved_targets = resolve_stream_targets(
             match.stream_page_url or "", config)
         if resolved_targets:
+            labels = ", ".join(target.label for target in resolved_targets)
+            log_status(
+                f"Live stream target(s) ready for {match.match_id}: {labels}"
+            )
             return resolved_targets
+        log_status(
+            f"No live stream targets found yet. Sleeping {config['poll_interval_seconds']} seconds."
+        )
         time.sleep(config["poll_interval_seconds"])
+        attempt += 1
 
     raise RuntimeError(
         f"Unable to resolve a live stream for {match.match_id} before {deadline.isoformat()}."
@@ -1162,6 +1409,9 @@ def record_stream_targets(
 ) -> list[tuple[StreamTarget, Path]]:
     recordings: list[tuple[StreamTarget, Path, subprocess.Popen[str]]] = []
     multiple_targets = len(targets) > 1
+    log_status(
+        f"Starting recording for {len(targets)} stream target(s) for {match.match_id}"
+    )
 
     for target in targets:
         output_path = build_output_path(
@@ -1175,6 +1425,9 @@ def record_stream_targets(
             match.duration_minutes,
             config,
         )
+        log_status(
+            f"Launching ffmpeg for {target.label}: {target.page_url} -> {output_path}"
+        )
         process = subprocess.Popen(command)
         recordings.append((target, output_path, process))
 
@@ -1182,8 +1435,10 @@ def record_stream_targets(
     completed: list[tuple[StreamTarget, Path]] = []
     for target, output_path, process in recordings:
         if process.wait() != 0:
+            log_status(f"ffmpeg failed for {target.label}")
             failures.append(target.label)
         else:
+            log_status(f"Recording finished for {target.label}: {output_path}")
             completed.append((target, output_path))
 
     if failures:
@@ -1199,6 +1454,7 @@ def maybe_upload_to_youtube(
 ) -> None:
     youtube_config = config["youtube"]
     if not youtube_config["enabled"]:
+        log_status(f"YouTube upload disabled. Skipping upload for {output_path}")
         return
 
     from youtube_uploader import upload_video
@@ -1224,6 +1480,7 @@ def maybe_upload_to_youtube(
         "stream_page_url": match.stream_page_url or "",
         "output_path": str(output_path),
     }
+    log_status(f"Uploading to YouTube: {output_path}")
     upload_video(
         file_path=output_path,
         title=title,
@@ -1234,6 +1491,7 @@ def maybe_upload_to_youtube(
         category_id=youtube_config["category_id"],
         tags=list(youtube_config.get("tags", [])),
     )
+    log_status(f"YouTube upload complete: {output_path}")
 
 
 def record_match(config_path: Path, match_id: str) -> list[Path]:
@@ -1251,6 +1509,7 @@ def record_match(config_path: Path, match_id: str) -> list[Path]:
             f"{match_id} still needs a stream page URL. Add it under match_overrides in the config."
         )
 
+    log_status(f"Using stream page URL for {match_id}: {selected.stream_page_url}")
     stream_targets = wait_for_live_streams(selected, config)
     recordings = record_stream_targets(selected, stream_targets, config)
     output_paths: list[Path] = []
