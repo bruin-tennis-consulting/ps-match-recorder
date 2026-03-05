@@ -1,0 +1,120 @@
+{
+  "schedule_urls": [
+    "https://bigten.org/mten/schedule/",
+    "https://nextgen.bigten.org/mten/schedule/"
+  ],
+  "schedule_timezone": "America/Los_Angeles",
+  "output_root": "recordings",
+  "catalog_path": "data/bigten_matches.json",
+  "launchd_output_dir": "launchd",
+  "logs_dir": "logs",
+  "lead_time_minutes": 10,
+  "stream_retry_minutes": 45,
+  "poll_interval_seconds": 60,
+  "default_duration_minutes": 300,
+  "ffmpeg_path": "ffmpeg",
+  "youtube": {
+    "enabled": true,
+    "client_secrets_file": "youtube_client_secrets.json",
+    "token_file": "youtube_token.json",
+    "privacy_status": "unlisted",
+    "category_id": "17",
+    "title_template": "{match_title} | {start_date}",
+    "description_template": "Recorded from {stream_page_url}\nScheduled match time: {start_iso}\nSource schedule: {schedule_url}",
+    "tags": [
+      "college tennis",
+      "Big Ten",
+      "men's tennis"
+    ]
+  },
+  "match_overrides": {
+    "2026-03-13_michigan-vs-ohio-state": {
+      "stream_page_url": "https://ohiostatebuckeyes.com/sports/2023/10/24/mens-tennis-live-streaming-indoors",
+      "notes": [
+        "Ohio State lists home men's tennis Watch links on its live streaming page."
+      ]
+    },
+    "2026-03-15_michigan-state-vs-ohio-state": {
+      "stream_page_url": "https://ohiostatebuckeyes.com/sports/2023/10/24/mens-tennis-live-streaming-indoors",
+      "notes": [
+        "Ohio State lists home men's tennis Watch links on its live streaming page."
+      ]
+    },
+    "2026-03-06_southern-california-vs-purdue": {
+      "stream_page_url": "https://web.playsight.com/facility/purdue-university-tennis/home",
+      "notes": [
+        "Purdue streams home men's tennis matches through its PlaySight facility page."
+      ]
+    },
+    "2026-03-06_ohio-state-vs-baylor": {
+      "stream_page_url": "https://web.playsight.com/facility/baylor-university/home",
+      "notes": [
+        "Baylor's tennis stream directory links to the PlaySight facility page.",
+        "Using the facility page allows multi-court discovery (e.g., courts 101-107) and parallel recording."
+      ]
+    },
+    "2026-03-03_michigan-state-vs-arizona": {
+      "stream_page_url": "https://web.playsight.com/live/university-of-arizona/101",
+      "timezone": "America/Phoenix",
+      "duration_minutes": 300,
+      "notes": [
+        "Arizona Athletics lists this match on 2026-03-03 at 1:00 PM MST, which is 12:00 PM PST.",
+        "Temporary direct court override for the live Arizona match to avoid slow multi-court discovery during the active recording window."
+      ]
+    },
+    "2026-03-08_ucla-vs-purdue": {
+      "stream_page_url": "https://web.playsight.com/facility/purdue-university-tennis/home",
+      "notes": [
+        "Purdue streams home men's tennis matches through its PlaySight facility page."
+      ]
+    },
+    "2026-03-27_illinois-vs-ohio-state": {
+      "stream_page_url": "https://ohiostatebuckeyes.com/sports/2023/10/24/mens-tennis-live-streaming-indoors",
+      "notes": [
+        "Ohio State lists home men's tennis Watch links on its live streaming page."
+      ]
+    },
+    "2026-03-29_northwestern-vs-ohio-state": {
+      "stream_page_url": "https://ohiostatebuckeyes.com/sports/2023/10/24/mens-tennis-live-streaming-indoors",
+      "notes": [
+        "Ohio State lists home men's tennis Watch links on its live streaming page."
+      ]
+    },
+    "2026-03-20_penn-state-vs-purdue": {
+      "stream_page_url": "https://web.playsight.com/facility/purdue-university-tennis/home",
+      "notes": [
+        "Purdue streams home men's tennis matches through its PlaySight facility page."
+      ]
+    },
+    "2026-03-22_ohio-state-vs-purdue": {
+      "stream_page_url": "https://web.playsight.com/facility/purdue-university-tennis/home",
+      "notes": [
+        "Purdue streams home men's tennis matches through its PlaySight facility page."
+      ]
+    },
+    "2026-04-10_oregon-vs-ohio-state": {
+      "stream_page_url": "https://ohiostatebuckeyes.com/sports/2023/10/24/mens-tennis-live-streaming-indoors",
+      "notes": [
+        "Ohio State lists home men's tennis Watch links on its live streaming page."
+      ]
+    },
+    "2026-04-10_nebraska-vs-purdue": {
+      "stream_page_url": "https://web.playsight.com/facility/purdue-university-tennis/home",
+      "notes": [
+        "Purdue streams home men's tennis matches through its PlaySight facility page."
+      ]
+    },
+    "2026-04-12_washington-vs-ohio-state": {
+      "stream_page_url": "https://ohiostatebuckeyes.com/sports/2023/10/24/mens-tennis-live-streaming-indoors",
+      "notes": [
+        "Ohio State lists home men's tennis Watch links on its live streaming page."
+      ]
+    },
+    "2026-04-12_wisconsin-vs-purdue": {
+      "stream_page_url": "https://web.playsight.com/facility/purdue-university-tennis/home",
+      "notes": [
+        "Purdue streams home men's tennis matches through its PlaySight facility page."
+      ]
+    }
+  }
+}

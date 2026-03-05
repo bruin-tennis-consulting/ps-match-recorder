@@ -1,0 +1,40 @@
+{
+  "schedule_urls": [
+    "https://bigten.org/mten/schedule/",
+    "https://nextgen.bigten.org/mten/schedule/"
+  ],
+  "schedule_timezone": "America/Los_Angeles",
+  "output_root": "recordings",
+  "catalog_path": "data/bigten_matches.json",
+  "launchd_output_dir": "launchd",
+  "logs_dir": "logs",
+  "lead_time_minutes": 10,
+  "stream_retry_minutes": 45,
+  "poll_interval_seconds": 60,
+  "default_duration_minutes": 300,
+  "ffmpeg_path": "ffmpeg",
+  "youtube": {
+    "enabled": false,
+    "client_secrets_file": "youtube_client_secrets.json",
+    "token_file": "youtube_token.json",
+    "privacy_status": "unlisted",
+    "category_id": "17",
+    "title_template": "{match_title} | {start_date}",
+    "description_template": "Recorded from {stream_page_url}\nScheduled match time: {start_iso}\nSource schedule: {schedule_url}",
+    "tags": [
+      "college tennis",
+      "Big Ten",
+      "men's tennis"
+    ]
+  },
+  "match_overrides": {
+    "2026-03-03_michigan-state-vs-arizona": {
+      "stream_page_url": "https://arizonawildcats.com/sports/2020/1/14/tennis-live-streaming",
+      "timezone": "America/Phoenix",
+      "duration_minutes": 300,
+      "notes": [
+        "Arizona Athletics lists this match on 2026-03-03 at 1:00 PM MST, which is 12:00 PM PST."
+      ]
+    }
+  }
+}

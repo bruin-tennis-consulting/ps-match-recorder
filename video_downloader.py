@@ -56,7 +56,8 @@ def record_stream(url, output, duration):
 # Example usage
 if __name__ == "__main__":
     # Example usage
-    stream_url = "https://cdn-psnginx-usa-losangeles-01.playsight.com/hls/occidentalcollegeADMINCourt102.m3u8"
-    output_file = "out/livestream_recording.mp4"
+    stream_url = "https://usctrojans.com/sports/2020/2/19/usc-trojans-m-tennis-live-scoreboard-video-david-marks-stadium"
+    output_file = "USC_Pepperdine_Court2.mp4"
+    duration = "4 hours"
 
-    record_stream(stream_url, output_file)
+    record_stream(stream_url, output_file, duration)
