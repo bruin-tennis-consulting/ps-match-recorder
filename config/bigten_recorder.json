@@ -46,11 +46,33 @@
         "Purdue streams home men's tennis matches through its PlaySight facility page."
       ]
     },
-    "2026-03-06_ohio-state-vs-baylor": {
-      "stream_page_url": "https://web.playsight.com/facility/baylor-university/home",
+    "2026-03-06_wisconsin-vs-michigan": {
+      "stream_page_url": "https://web.playsight.com/facility/university-of-michigan-tennis/home",
       "notes": [
-        "Baylor's tennis stream directory links to the PlaySight facility page.",
-        "Using the facility page allows multi-court discovery (e.g., courts 101-107) and parallel recording."
+        "Michigan streams home men's tennis matches through its PlaySight facility page.",
+        "Match time is Friday, March 6, 2026 at 3:00 PM PST."
+      ]
+    },
+    "2026-03-06_nebraska-vs-michigan-state": {
+      "stream_page_url": "https://web.track.tennis/#/@public-FxsQm0KPnXI/@public-FxsQm0KPnXI/evt-L2ioacpy7Z0",
+      "start_iso": "2026-03-06T14:00:00-08:00",
+      "timezone": "America/Los_Angeles",
+      "notes": [
+        "User-provided Track.Tennis live stream for Nebraska vs. Michigan State.",
+        "Start time adjusted to Friday, March 6, 2026 at 2:00 PM PST.",
+        "Use the specific Track.Tennis event URL for this match."
+      ]
+    },
+    "2026-03-06_ohio-state-vs-baylor": {
+      "stream_page_url": "https://baylorbears.com/sports/2018/9/18/tennis-playsight",
+      "include_stream_numbers": [
+        2,
+        5
+      ],
+      "notes": [
+        "Baylor hosts men's tennis streams on this embedded PlaySight directory page.",
+        "Parser now prioritizes embedded PlaySight links and suppresses YouTube fallback for playsight-intent pages.",
+        "Only courts 2 and 5 are selected for this match."
       ]
     },
     "2026-03-03_michigan-state-vs-arizona": {
@@ -66,6 +88,63 @@
       "stream_page_url": "https://web.playsight.com/facility/purdue-university-tennis/home",
       "notes": [
         "Purdue streams home men's tennis matches through its PlaySight facility page."
+      ]
+    },
+    "2026-03-07_washington-vs-northwestern": {
+      "stream_page_url": "https://nusports.com/watch/",
+      "event_title_contains": "MTEN vs Washington",
+      "notes": [
+        "Northwestern home streams run through nusports.com/watch Upcoming Events cards.",
+        "Recorder should collect all event cards matching MTEN vs Washington and resolve each court stream."
+      ]
+    },
+    "2026-03-07_oregon-vs-illinois": {
+      "stream_page_url": "https://fightingillini.com/sports/2016/1/14/mtennis_livestatsvideo",
+      "notes": [
+        "Illinois home matches use this stream hub page.",
+        "Parser resolves court-specific Full Screen links and records courts once they go live."
+      ]
+    },
+    "2026-03-08_washington-vs-illinois": {
+      "stream_page_url": "https://fightingillini.com/sports/2016/1/14/mtennis_livestatsvideo",
+      "notes": [
+        "Illinois home matches use this stream hub page.",
+        "Parser resolves court-specific Full Screen links and records courts once they go live."
+      ]
+    },
+    "2026-03-20_michigan-vs-illinois": {
+      "stream_page_url": "https://fightingillini.com/sports/2016/1/14/mtennis_livestatsvideo",
+      "notes": [
+        "Illinois home matches use this stream hub page.",
+        "Parser resolves court-specific Full Screen links and records courts once they go live."
+      ]
+    },
+    "2026-03-22_michigan-state-vs-illinois": {
+      "stream_page_url": "https://fightingillini.com/sports/2016/1/14/mtennis_livestatsvideo",
+      "notes": [
+        "Illinois home matches use this stream hub page.",
+        "Parser resolves court-specific Full Screen links and records courts once they go live."
+      ]
+    },
+    "2026-04-03_indiana-vs-illinois": {
+      "stream_page_url": "https://fightingillini.com/sports/2016/1/14/mtennis_livestatsvideo",
+      "notes": [
+        "Illinois home matches use this stream hub page.",
+        "Parser resolves court-specific Full Screen links and records courts once they go live."
+      ]
+    },
+    "2026-04-05_purdue-vs-illinois": {
+      "stream_page_url": "https://fightingillini.com/sports/2016/1/14/mtennis_livestatsvideo",
+      "notes": [
+        "Illinois home matches use this stream hub page.",
+        "Parser resolves court-specific Full Screen links and records courts once they go live."
+      ]
+    },
+    "2026-04-18_northwestern-vs-illinois": {
+      "stream_page_url": "https://fightingillini.com/sports/2016/1/14/mtennis_livestatsvideo",
+      "notes": [
+        "Illinois home matches use this stream hub page.",
+        "Parser resolves court-specific Full Screen links and records courts once they go live."
       ]
     },
     "2026-03-27_illinois-vs-ohio-state": {

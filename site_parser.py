@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 import requests
@@ -60,11 +60,25 @@ DEFAULT_CONFIG = {
     "match_overrides": {},
 }
 DIRECT_STREAM_SUFFIXES = (".m3u8", ".mp4", ".mpd")
+NON_PAGE_SUFFIXES = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".svg",
+    ".ico",
+    ".css",
+    ".js",
+    ".json",
+    ".webmanifest",
+    ".xml",
+)
 PLAYSIGHT_LINK_PATTERN = re.compile(
-    r"https?://[^\s\"'<>]*playsight\.com/(?:live|livestreaming|facility)/[^\s\"'<>]+",
+    r"(?:https?:)?//[^\s\"'<>]*playsight\.com/(?:live|livestreaming|facility)/[^\s\"'<>]+",
     re.IGNORECASE,
 )
 URL_ATTRIBUTE_KEYS = ("href", "src", "data-src", "data-href", "data-url")
+GENERIC_URL_PATTERN = re.compile(r"(?:https?:)?//[^\s\"'<>]+", re.IGNORECASE)
 MONTH_PATTERN = (
     r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
     r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|"
@@ -196,6 +210,45 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip()
 
 
+def extract_urls_from_text(value: str) -> list[str]:
+    if not value:
+        return []
+
+    normalized = value.replace("\\/", "/")
+    urls: list[str] = []
+    for raw in GENERIC_URL_PATTERN.findall(normalized):
+        cleaned = raw.strip(" \t\r\n'\"),;")
+        if cleaned.startswith("//"):
+            cleaned = f"https:{cleaned}"
+        if cleaned:
+            urls.append(cleaned)
+    return urls
+
+
+def parse_url_or_none(value: str | None) -> Any | None:
+    if not value:
+        return None
+    try:
+        return urlparse(value)
+    except ValueError:
+        return None
+
+
+def join_url_or_none(base_url: str, candidate_url: str) -> str | None:
+    try:
+        return urljoin(base_url, candidate_url)
+    except ValueError:
+        return None
+
+
+def is_navigable_page_url(url: str) -> bool:
+    parsed = parse_url_or_none(url)
+    if parsed is None or parsed.scheme not in {"http", "https"}:
+        return False
+    path = parsed.path.lower()
+    return not path.endswith(NON_PAGE_SUFFIXES)
+
+
 def slugify(value: str) -> str:
     lowered = normalize_text(value).lower()
     lowered = lowered.replace("&", "and")
@@ -211,7 +264,10 @@ def safe_filename(value: str) -> str:
 def infer_provider(url: str | None) -> str | None:
     if not url:
         return None
-    host = urlparse(url).netloc.lower()
+    parsed = parse_url_or_none(url)
+    if parsed is None:
+        return None
+    host = parsed.netloc.lower()
     if "playsight" in host:
         return "playsight"
     if "youtube" in host or "youtu.be" in host:
@@ -228,13 +284,120 @@ def infer_provider(url: str | None) -> str | None:
 def is_playsight_url(url: str | None) -> bool:
     if not url:
         return False
-    return "playsight.com" in urlparse(url).netloc.lower()
+    parsed = parse_url_or_none(url)
+    if parsed is None:
+        return False
+    return "playsight.com" in parsed.netloc.lower()
+
+
+def is_track_tennis_url(url: str | None) -> bool:
+    if not url:
+        return False
+    parsed = parse_url_or_none(url)
+    if parsed is None:
+        return False
+    return "track.tennis" in parsed.netloc.lower()
+
+
+def is_nusports_url(url: str | None) -> bool:
+    if not url:
+        return False
+    parsed = parse_url_or_none(url)
+    if parsed is None:
+        return False
+    return "nusports.com" in parsed.netloc.lower()
+
+
+def is_nusports_watch_url(url: str | None) -> bool:
+    if not is_nusports_url(url):
+        return False
+    parsed = parse_url_or_none(url or "")
+    if parsed is None:
+        return False
+    return parsed.path.lower().startswith("/watch")
+
+
+def is_fightingillini_url(url: str | None) -> bool:
+    if not url:
+        return False
+    parsed = parse_url_or_none(url)
+    if parsed is None:
+        return False
+    return "fightingillini.com" in parsed.netloc.lower()
+
+
+def is_illinois_mten_stream_hub_url(url: str | None) -> bool:
+    if not is_fightingillini_url(url):
+        return False
+    parsed = parse_url_or_none(url or "")
+    if parsed is None:
+        return False
+    return "mtennis_livestatsvideo" in parsed.path.lower()
+
+
+def is_fightingillini_watch_url(url: str | None) -> bool:
+    if not is_fightingillini_url(url):
+        return False
+    parsed = parse_url_or_none(url or "")
+    if parsed is None:
+        return False
+    return parsed.path.lower().startswith("/watch")
+
+
+def is_fightingillini_embed_url(url: str | None) -> bool:
+    if not is_fightingillini_url(url):
+        return False
+    parsed = parse_url_or_none(url or "")
+    if parsed is None:
+        return False
+    return parsed.path.lower().endswith("/showcase/embed.aspx")
+
+
+def extract_live_query_id(url: str | None) -> str | None:
+    parsed = parse_url_or_none(url)
+    if parsed is None:
+        return None
+    try:
+        query = parse_qs(parsed.query)
+    except Exception:
+        return None
+    values = query.get("Live") or query.get("live")
+    if not values:
+        return None
+    value = normalize_text(values[0])
+    return value or None
+
+
+def build_fightingillini_watch_url(live_id: str) -> str:
+    return f"https://fightingillini.com/watch/?Live={live_id}&type=Live"
+
+
+def build_fightingillini_embed_url(live_id: str) -> str:
+    return f"https://fightingillini.com/showcase/embed.aspx?Live={live_id}"
+
+
+def is_playsight_intent_url(url: str | None) -> bool:
+    if not url:
+        return False
+    if is_playsight_url(url):
+        return True
+
+    parsed = parse_url_or_none(url)
+    if parsed is None:
+        return False
+    host = parsed.netloc.lower()
+    if "youtube.com" in host or "youtu.be" in host:
+        return False
+    return "playsight" in url.lower()
 
 
 def is_playsight_facility_or_multi_page(url: str | None) -> bool:
     if not is_playsight_url(url):
         return False
-    path = urlparse(url or "").path.lower()
+    parsed = parse_url_or_none(url or "")
+    if parsed is None:
+        return False
+    path = parsed.path.lower()
     return "/facility/" in path or "/live/" in path or "/livestreaming/" in path
 
 
@@ -305,22 +468,47 @@ def fetch_html(url: str, config: dict[str, Any], rendered: bool = False) -> str:
     return response.text
 
 
-def fetch_html_with_selenium(url: str) -> str:
-    from selenium import webdriver
+def build_chrome_options(enable_performance_logs: bool = False) -> Any:
     from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service as ChromeService
-    from webdriver_manager.chrome import ChromeDriverManager
 
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-extensions")
     options.add_argument("--no-sandbox")
+    if enable_performance_logs:
+        options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+    return options
 
-    driver = webdriver.Chrome(
-        service=ChromeService(ChromeDriverManager().install()),
-        options=options,
-    )
+
+def create_chrome_driver(options: Any) -> Any:
+    from selenium import webdriver
+
+    startup_errors: list[str] = []
+    try:
+        return webdriver.Chrome(options=options)
+    except Exception as exc:
+        startup_errors.append(f"selenium-manager: {exc}")
+
+    try:
+        from selenium.webdriver.chrome.service import Service as ChromeService
+        from webdriver_manager.chrome import ChromeDriverManager
+
+        return webdriver.Chrome(
+            service=ChromeService(ChromeDriverManager().install()),
+            options=options,
+        )
+    except Exception as exc:
+        startup_errors.append(f"webdriver-manager: {exc}")
+        raise RuntimeError(
+            "Unable to start Chrome WebDriver. " + " | ".join(startup_errors)
+        ) from exc
+
+
+def fetch_html_with_selenium(url: str) -> str:
+    options = build_chrome_options(enable_performance_logs=False)
+    driver = create_chrome_driver(options)
+
     try:
         driver.get(url)
         time.sleep(8)
@@ -829,6 +1017,10 @@ def load_catalog(config: dict[str, Any]) -> list[MatchRecord]:
 
 
 def fetch_page_links(url: str, config: dict[str, Any]) -> list[str]:
+    parsed_base = parse_url_or_none(url)
+    if parsed_base is None or parsed_base.scheme not in {"http", "https"}:
+        return []
+
     try:
         html = fetch_html(url, config)
     except Exception:
@@ -839,8 +1031,12 @@ def fetch_page_links(url: str, config: dict[str, Any]) -> list[str]:
     seen_links: set[str] = set()
 
     def maybe_add(candidate: str) -> None:
-        absolute = urljoin(url, candidate.strip())
+        absolute = join_url_or_none(url, candidate.strip())
+        if not absolute:
+            return
         if absolute in seen_links:
+            return
+        if not is_navigable_page_url(absolute):
             return
         lowered = absolute.lower()
         score = 0
@@ -856,13 +1052,19 @@ def fetch_page_links(url: str, config: dict[str, Any]) -> list[str]:
             seen_links.add(absolute)
 
     for tag in soup.find_all(True):
-        for attr in URL_ATTRIBUTE_KEYS:
-            value = tag.get(attr)
-            if isinstance(value, str):
+        for attr, value in tag.attrs.items():
+            if not isinstance(value, str):
+                continue
+            if attr in URL_ATTRIBUTE_KEYS:
                 maybe_add(value)
+            if "playsight" in value.lower():
+                for discovered_url in extract_urls_from_text(value):
+                    maybe_add(discovered_url)
 
     for match in PLAYSIGHT_LINK_PATTERN.findall(html):
         maybe_add(match)
+    for discovered_url in extract_urls_from_text(html):
+        maybe_add(discovered_url)
 
     ranked_links.sort(reverse=True)
     deduped = list(dict.fromkeys(link for _, link in ranked_links))
@@ -882,32 +1084,34 @@ def extract_court_label(text: str, fallback: str) -> str:
 def extract_playsight_candidates(
     page_url: str, config: dict[str, Any]
 ) -> list[tuple[str, str]]:
-    try:
-        html = fetch_html(page_url, config)
-    except Exception:
-        try:
-            html = fetch_html(page_url, config, rendered=True)
-        except Exception:
-            return []
-
-    soup = BeautifulSoup(html, "html.parser")
-    default_label = extract_court_label(soup.get_text(" ", strip=True), "Main Court")
     candidates: list[tuple[str, str]] = []
     seen_urls: set[str] = set()
+    has_livestream_candidate = False
 
-    def add_candidate(raw_url: str, label_hint: str = "") -> None:
-        absolute = urljoin(page_url, raw_url.strip()).strip()
+    def add_candidate(raw_url: str, label_hint: str = "", default_label: str = "Main Court") -> None:
+        nonlocal has_livestream_candidate
+        absolute = join_url_or_none(page_url, raw_url.strip())
+        if not absolute:
+            return
+        absolute = absolute.strip()
         if not absolute or absolute in seen_urls:
+            return
+        if not is_navigable_page_url(absolute):
             return
         if not is_playsight_url(absolute):
             return
-        path = urlparse(absolute).path.lower()
+        parsed = parse_url_or_none(absolute)
+        if parsed is None:
+            return
+        path = parsed.path.lower()
         if (
             "/live/" not in path
             and "/livestreaming/" not in path
             and "/facility/" not in path
         ):
             return
+        if "/live/" in path or "/livestreaming/" in path:
+            has_livestream_candidate = True
 
         normalized_hint = normalize_text(label_hint)
         label = extract_court_label(normalized_hint, normalized_hint)
@@ -917,27 +1121,68 @@ def extract_playsight_candidates(
         candidates.append((label or default_label, absolute))
         seen_urls.add(absolute)
 
-    for tag in soup.find_all(True):
-        label_hint = normalize_text(
-            " ".join(
-                value
-                for value in (
-                    tag.get_text(" ", strip=True),
-                    tag.get("title"),
-                    tag.get("aria-label"),
-                    tag.get("data-label"),
-                    tag.get("alt"),
-                )
-                if isinstance(value, str) and normalize_text(value)
-            )
-        )
-        for attribute_key in URL_ATTRIBUTE_KEYS:
-            attribute_value = tag.get(attribute_key)
-            if isinstance(attribute_value, str):
-                add_candidate(attribute_value, label_hint)
+    def collect_from_html(html: str, allow_full_scan: bool) -> None:
+        soup = BeautifulSoup(html, "html.parser")
+        default_label = extract_court_label(soup.get_text(" ", strip=True), "Main Court")
 
-    for matched_url in PLAYSIGHT_LINK_PATTERN.findall(html):
-        add_candidate(matched_url, matched_url)
+        for tag in soup.find_all(True):
+            label_hint = normalize_text(
+                " ".join(
+                    value
+                    for value in (
+                        tag.get_text(" ", strip=True),
+                        tag.get("title"),
+                        tag.get("aria-label"),
+                        tag.get("data-label"),
+                        tag.get("alt"),
+                    )
+                    if isinstance(value, str) and normalize_text(value)
+                )
+            )
+            for attribute_key, attribute_value in tag.attrs.items():
+                if not isinstance(attribute_value, str):
+                    continue
+                if attribute_key in URL_ATTRIBUTE_KEYS:
+                    add_candidate(attribute_value, label_hint, default_label)
+                if "playsight" in attribute_value.lower():
+                    for discovered_url in extract_urls_from_text(attribute_value):
+                        add_candidate(discovered_url, label_hint, default_label)
+
+        for matched_url in PLAYSIGHT_LINK_PATTERN.findall(html):
+            add_candidate(matched_url, matched_url, default_label)
+        if allow_full_scan:
+            for discovered_url in extract_urls_from_text(html):
+                if "playsight" in discovered_url.lower():
+                    add_candidate(discovered_url, discovered_url, default_label)
+
+    fetched_html = None
+    try:
+        fetched_html = fetch_html(page_url, config)
+    except Exception:
+        pass
+
+    if fetched_html:
+        collect_from_html(
+            fetched_html,
+            allow_full_scan=not is_playsight_url(page_url),
+        )
+    else:
+        try:
+            rendered_html = fetch_html(page_url, config, rendered=True)
+        except Exception:
+            return []
+        collect_from_html(
+            rendered_html,
+            allow_full_scan=not is_playsight_url(page_url),
+        )
+        return candidates
+
+    if is_playsight_url(page_url) and not has_livestream_candidate:
+        try:
+            rendered_html = fetch_html(page_url, config, rendered=True)
+            collect_from_html(rendered_html, allow_full_scan=False)
+        except Exception:
+            pass
 
     return candidates
 
@@ -948,7 +1193,10 @@ def extract_embedded_playsight_facility_pages(
     facility_pages: list[str] = []
     seen_urls: set[str] = set()
     for _, candidate_url in extract_playsight_candidates(page_url, config):
-        if "/facility/" not in urlparse(candidate_url).path.lower():
+        parsed = parse_url_or_none(candidate_url)
+        if parsed is None:
+            continue
+        if "/facility/" not in parsed.path.lower():
             continue
         if candidate_url in seen_urls:
             continue
@@ -957,15 +1205,99 @@ def extract_embedded_playsight_facility_pages(
     return facility_pages
 
 
+def extract_playsight_watch_pages_with_selenium(page_url: str) -> list[tuple[str, str]]:
+    from selenium.webdriver.common.by import By
+
+    options = build_chrome_options(enable_performance_logs=False)
+    try:
+        driver = create_chrome_driver(options)
+    except Exception as exc:
+        log_status(f"Failed to start Chrome WebDriver for PlaySight watch scraping: {exc}")
+        return []
+
+    candidates: list[tuple[str, str]] = []
+    seen_urls: set[str] = set()
+    try:
+        driver.get(page_url)
+        time.sleep(8)
+
+        watch_controls = driver.find_elements(
+            By.XPATH,
+            (
+                '//a[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+                '"abcdefghijklmnopqrstuvwxyz"), "watch")]'
+                ' | '
+                '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+                '"abcdefghijklmnopqrstuvwxyz"), "watch")]'
+            ),
+        )
+
+        for control in watch_controls:
+            href = (
+                control.get_attribute("href")
+                or control.get_attribute("data-href")
+                or ""
+            )
+            if not href:
+                onclick = control.get_attribute("onclick") or ""
+                discovered = extract_urls_from_text(onclick)
+                if discovered:
+                    href = discovered[0]
+            if not href:
+                continue
+
+            absolute = join_url_or_none(page_url, href)
+            if not absolute or absolute in seen_urls:
+                continue
+            if not is_playsight_url(absolute):
+                continue
+            parsed = parse_url_or_none(absolute)
+            if parsed is None:
+                continue
+            path = parsed.path.lower()
+            if "/live/" not in path and "/livestreaming/" not in path:
+                continue
+
+            label = "Watch"
+            container = control
+            for _ in range(6):
+                container_text = normalize_text(container.text)
+                if container_text:
+                    label = extract_court_label(container_text, label)
+                    smartcourt_match = re.search(
+                        r"SmartCourt\s*0*(\d+)",
+                        container_text,
+                        re.IGNORECASE,
+                    )
+                    if smartcourt_match:
+                        label = f"Court {smartcourt_match.group(1)}"
+                        break
+                try:
+                    container = container.find_element(By.XPATH, "..")
+                except Exception:
+                    break
+
+            candidates.append((label, absolute))
+            seen_urls.add(absolute)
+    finally:
+        driver.quit()
+
+    return candidates
+
+
 def extract_playsight_watch_pages(page_url: str, config: dict[str, Any]) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
     default_label = "Main Court"
 
-    if "/live/" in urlparse(page_url).path.lower():
+    parsed_page = parse_url_or_none(page_url)
+    if parsed_page and "/live/" in parsed_page.path.lower():
         candidates.append((default_label, page_url))
 
     for label, href in extract_playsight_candidates(page_url, config):
-        href_path = urlparse(href).path.lower()
+        parsed_href = parse_url_or_none(href)
+        if parsed_href is None:
+            continue
+        href_path = parsed_href.path.lower()
         if "/live/" not in href_path and "/livestreaming/" not in href_path:
             continue
         candidates.append((label or default_label, href))
@@ -977,7 +1309,229 @@ def extract_playsight_watch_pages(page_url: str, config: dict[str, Any]) -> list
             continue
         deduped.append((label, href))
         seen_urls.add(href)
+
+    parsed_page = parse_url_or_none(page_url)
+    if (
+        not deduped
+        and parsed_page is not None
+        and is_playsight_url(page_url)
+        and "/facility/" in parsed_page.path.lower()
+    ):
+        selenium_candidates = extract_playsight_watch_pages_with_selenium(page_url)
+        for label, href in selenium_candidates:
+            if href in seen_urls:
+                continue
+            deduped.append((label, href))
+            seen_urls.add(href)
     return deduped
+
+
+def extract_nusports_event_pages_with_selenium(
+    page_url: str, event_title_filters: list[str] | None = None
+) -> list[tuple[str, str]]:
+    from selenium.webdriver.common.by import By
+
+    event_title_filters = [token.lower() for token in (event_title_filters or [])]
+    options = build_chrome_options(enable_performance_logs=False)
+    try:
+        driver = create_chrome_driver(options)
+    except Exception as exc:
+        log_status(f"Failed to start Chrome WebDriver for Northwestern watch scraping: {exc}")
+        return []
+
+    candidates: list[tuple[str, str]] = []
+    seen_urls: set[str] = set()
+
+    def should_keep_event(text: str) -> bool:
+        normalized = normalize_text(text).lower()
+        if "mten vs" not in normalized:
+            return False
+        if not event_title_filters:
+            return True
+        return any(token in normalized for token in event_title_filters)
+
+    def extract_label(text: str, fallback_index: int) -> str:
+        normalized = normalize_text(text)
+        court_match = re.search(r"Court\s*0*(\d+)", normalized, re.IGNORECASE)
+        if court_match:
+            return f"Court {court_match.group(1)}"
+        return f"Court {fallback_index}"
+
+    try:
+        log_status(f"Opening Northwestern watch page: {page_url}")
+        driver.get(page_url)
+        time.sleep(8)
+
+        show_all_locators = [
+            (By.XPATH, '//a[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "show all")]'),
+            (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "show all")]'),
+        ]
+        for by, selector in show_all_locators:
+            try:
+                controls = driver.find_elements(by, selector)
+            except Exception:
+                continue
+            if not controls:
+                continue
+            try:
+                driver.execute_script("arguments[0].click();", controls[0])
+                time.sleep(2)
+                break
+            except Exception:
+                continue
+
+        anchor_cards = driver.find_elements(
+            By.XPATH,
+            (
+                '//a['
+                './/*[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+                '"abcdefghijklmnopqrstuvwxyz"), "mten vs")]'
+                ']'
+            ),
+        )
+
+        fallback_nodes = []
+        if not anchor_cards:
+            fallback_nodes = driver.find_elements(
+                By.XPATH,
+                (
+                    '//*[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", '
+                    '"abcdefghijklmnopqrstuvwxyz"), "mten vs")]'
+                ),
+            )
+
+        entries = anchor_cards if anchor_cards else fallback_nodes
+        for index, entry in enumerate(entries, start=1):
+            text = normalize_text(entry.text)
+            if not should_keep_event(text):
+                continue
+
+            href = (
+                entry.get_attribute("href")
+                or entry.get_attribute("data-href")
+                or ""
+            )
+
+            current = entry
+            for _ in range(6):
+                if href:
+                    break
+                onclick = current.get_attribute("onclick") or ""
+                if onclick:
+                    discovered = extract_urls_from_text(onclick)
+                    if discovered:
+                        href = discovered[0]
+                        break
+                try:
+                    current = current.find_element(By.XPATH, "..")
+                except Exception:
+                    break
+                href = (
+                    current.get_attribute("href")
+                    or current.get_attribute("data-href")
+                    or ""
+                )
+
+            if not href:
+                continue
+
+            absolute = join_url_or_none(page_url, href)
+            if not absolute or absolute in seen_urls:
+                continue
+            if not is_navigable_page_url(absolute):
+                continue
+
+            candidates.append((extract_label(text, index), absolute))
+            seen_urls.add(absolute)
+    finally:
+        driver.quit()
+
+    return candidates
+
+
+def extract_fightingillini_watch_pages(
+    page_url: str, config: dict[str, Any]
+) -> list[tuple[str, str]]:
+    try:
+        html = fetch_html(page_url, config)
+    except Exception:
+        try:
+            html = fetch_html(page_url, config, rendered=True)
+        except Exception:
+            return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    candidates: list[tuple[int, str, str]] = []
+    seen_watch_urls: set[str] = set()
+
+    def court_label_from_tag(tag: Any, fallback_index: int) -> tuple[int, str]:
+        current = tag
+        for _ in range(5):
+            if current is None:
+                break
+            snippet = normalize_text(current.get_text(" ", strip=True))
+            match = re.search(r"Court\s*0*(\d+)", snippet, re.IGNORECASE)
+            if match:
+                court_number = int(match.group(1))
+                return court_number, f"Court {court_number}"
+            current = getattr(current, "parent", None)
+        return fallback_index, f"Court {fallback_index}"
+
+    def maybe_add_candidate(source_tag: Any, raw_url: str, fallback_index: int) -> None:
+        absolute = join_url_or_none(page_url, raw_url)
+        if not absolute:
+            return
+        live_id = extract_live_query_id(absolute)
+        if not live_id:
+            return
+        watch_url = build_fightingillini_watch_url(live_id)
+        if watch_url in seen_watch_urls:
+            return
+        court_number, label = court_label_from_tag(source_tag, fallback_index)
+        candidates.append((court_number, label, watch_url))
+        seen_watch_urls.add(watch_url)
+
+    fallback_index = 1
+    for anchor in soup.find_all("a"):
+        href = normalize_text(anchor.get("href") or "")
+        if not href:
+            continue
+        text = normalize_text(anchor.get_text(" ", strip=True)).lower()
+        href_lower = href.lower()
+        if (
+            "full screen" not in text
+            and "/watch/?live=" not in href_lower
+            and "/showcase/embed.aspx?live=" not in href_lower
+        ):
+            continue
+        maybe_add_candidate(anchor, href, fallback_index)
+        fallback_index += 1
+
+    for iframe in soup.find_all("iframe"):
+        src = normalize_text(iframe.get("src") or iframe.get("data-src") or "")
+        if "/showcase/embed.aspx?live=" not in src.lower():
+            continue
+        maybe_add_candidate(iframe, src, fallback_index)
+        fallback_index += 1
+
+    candidates.sort(key=lambda item: (item[0], item[2]))
+    if not candidates:
+        return []
+
+    max_court_number = max(court_number for court_number, _, _ in candidates)
+    next_court_number = max_court_number + 1
+    seen_court_numbers: dict[int, int] = {}
+    normalized_candidates: list[tuple[str, str]] = []
+    for court_number, _, watch_url in candidates:
+        seen_court_numbers[court_number] = seen_court_numbers.get(court_number, 0) + 1
+        if seen_court_numbers[court_number] == 1:
+            final_court_number = court_number
+        else:
+            final_court_number = next_court_number
+            next_court_number += 1
+        normalized_candidates.append((f"Court {final_court_number}", watch_url))
+
+    return normalized_candidates
 
 
 def extract_embedded_stream_targets(
@@ -987,7 +1541,10 @@ def extract_embedded_stream_targets(
     seen_urls: set[str] = set()
 
     for label, href in extract_playsight_candidates(page_url, config):
-        path = urlparse(href).path.lower()
+        parsed_href = parse_url_or_none(href)
+        if parsed_href is None:
+            continue
+        path = parsed_href.path.lower()
         if "/live/" not in path and "/livestreaming/" not in path:
             continue
         if href in seen_urls:
@@ -1035,7 +1592,42 @@ def extract_media_url_with_requests(page_url: str, config: dict[str, Any]) -> st
     return None
 
 
+def fightingillini_watch_page_unavailable(page_url: str, config: dict[str, Any]) -> bool:
+    try:
+        response = requests.get(
+            page_url,
+            timeout=min(10, config["request_timeout_seconds"]),
+            allow_redirects=True,
+        )
+    except Exception:
+        return False
+
+    body_present = bool(normalize_text(response.text))
+    if response.status_code in {404, 410}:
+        log_status(
+            f"Illinois Full Screen page not live yet ({response.status_code}): {page_url}"
+        )
+        return True
+    if response.status_code >= 400 and not body_present:
+        log_status(
+            "Illinois Full Screen page returned no content "
+            f"({response.status_code}): {page_url}"
+        )
+        return True
+    return False
+
+
 def sign_into_playsight_if_needed(driver: Any, page_url: str) -> None:
+    skip_login = os.getenv("PLAYSIGHT_SKIP_LOGIN", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if skip_login:
+        log_status("PLAYSIGHT_SKIP_LOGIN is set. Skipping Playsight login attempt.")
+        return
+
     email = os.getenv("PLAYSIGHT_EMAIL")
     password = os.getenv("PLAYSIGHT_PASSWORD")
     if not email or not password:
@@ -1046,7 +1638,7 @@ def sign_into_playsight_if_needed(driver: Any, page_url: str) -> None:
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.support.ui import WebDriverWait
 
-    wait = WebDriverWait(driver, 10)
+    wait = WebDriverWait(driver, 2)
 
     def find_login_form_fields() -> tuple[Any, Any, Any] | None:
         email_locators = [
@@ -1064,30 +1656,27 @@ def sign_into_playsight_if_needed(driver: Any, page_url: str) -> None:
             (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "log in")]'),
         ]
 
-        email_field = None
-        password_field = None
-        submit_button = None
+        def first_present(locators: list[tuple[Any, str]]) -> Any | None:
+            for locator in locators:
+                try:
+                    elements = driver.find_elements(*locator)
+                    if elements:
+                        return elements[0]
+                except Exception:
+                    continue
+            return None
 
-        for locator in email_locators:
-            try:
-                email_field = wait.until(EC.presence_of_element_located(locator))
-                break
-            except Exception:
-                continue
+        def first_clickable(locators: list[tuple[Any, str]]) -> Any | None:
+            for locator in locators:
+                try:
+                    return wait.until(EC.element_to_be_clickable(locator))
+                except Exception:
+                    continue
+            return None
 
-        for locator in password_locators:
-            try:
-                password_field = wait.until(EC.presence_of_element_located(locator))
-                break
-            except Exception:
-                continue
-
-        for locator in submit_locators:
-            try:
-                submit_button = wait.until(EC.element_to_be_clickable(locator))
-                break
-            except Exception:
-                continue
+        email_field = first_present(email_locators)
+        password_field = first_present(password_locators)
+        submit_button = first_clickable(submit_locators)
 
         if email_field and password_field and submit_button:
             return email_field, password_field, submit_button
@@ -1137,56 +1726,248 @@ def sign_into_playsight_if_needed(driver: Any, page_url: str) -> None:
     log_status("Playsight sign-in submitted.")
 
 
+def extract_media_url_from_performance_entries(entries: list[dict[str, Any]]) -> str | None:
+    for entry in reversed(entries):
+        try:
+            message = json.loads(entry["message"])
+            inner = message.get("message", {})
+            if inner.get("method") != "Network.responseReceived":
+                continue
+            response = inner.get("params", {}).get("response", {})
+            url = response.get("url", "")
+            if ".m3u8" in url or ".mpd" in url or ".mp4" in url:
+                return url
+        except Exception:
+            continue
+    for entry in reversed(entries):
+        message = entry.get("message", "")
+        media_match = re.search(
+            r"https?://[^\"' ]+\.(?:m3u8|mpd|mp4)[^\"' ]*",
+            message,
+        )
+        if media_match:
+            return media_match.group(0)
+    return None
+
+
+def click_playsight_play_controls(driver: Any) -> None:
+    from selenium.webdriver.common.by import By
+
+    play_locators = [
+        (By.XPATH, '//*[contains(@class, "vjs-big-play-button")]'),
+        (By.XPATH, '//*[contains(@class, "play-button")]'),
+        (By.XPATH, '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+        (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+        (By.XPATH, '//*[@role="button" and contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+    ]
+
+    for by, selector in play_locators:
+        try:
+            elements = driver.find_elements(by, selector)
+        except Exception:
+            continue
+        for element in elements:
+            try:
+                driver.execute_script("arguments[0].click();", element)
+                return
+            except Exception:
+                continue
+
+    try:
+        video_elements = driver.find_elements(By.TAG_NAME, "video")
+        if video_elements:
+            driver.execute_script(
+                "const v=arguments[0]; if(v && v.paused){v.play().catch(()=>{});} ",
+                video_elements[0],
+            )
+    except Exception:
+        pass
+
+
 def extract_media_url_with_playsight(page_url: str) -> str | None:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service as ChromeService
-    from webdriver_manager.chrome import ChromeDriverManager
-
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--no-sandbox")
-    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-
-    driver = webdriver.Chrome(
-        service=ChromeService(ChromeDriverManager().install()),
-        options=options,
-    )
+    options = build_chrome_options(enable_performance_logs=True)
+    try:
+        driver = create_chrome_driver(options)
+    except Exception as exc:
+        log_status(f"Failed to start Chrome WebDriver for Playsight: {exc}")
+        return None
     try:
         log_status(f"Opening Playsight page: {page_url}")
         driver.get(page_url)
-        sign_into_playsight_if_needed(driver, page_url)
         deadline = time.time() + 45
+        login_check_after = time.time() + 10
+        next_interaction_at = time.time() + 3
+        attempted_login = False
         while time.time() < deadline:
             entries = driver.get_log("performance")
-            for entry in reversed(entries):
-                try:
-                    message = json.loads(entry["message"])
-                    inner = message.get("message", {})
-                    if inner.get("method") != "Network.responseReceived":
-                        continue
-                    response = inner.get("params", {}).get("response", {})
-                    url = response.get("url", "")
-                    if ".m3u8" in url or ".mpd" in url or ".mp4" in url:
-                        log_status(f"Resolved Playsight media URL for {page_url}")
-                        return url
-                except Exception:
-                    continue
-            for entry in reversed(entries):
-                message = entry.get("message", "")
-                media_match = re.search(
-                    r"https?://[^\"' ]+\.(?:m3u8|mpd|mp4)[^\"' ]*",
-                    message,
-                )
-                if media_match:
-                    log_status(f"Resolved Playsight media URL for {page_url}")
-                    return media_match.group(0)
+            resolved = extract_media_url_from_performance_entries(entries)
+            if resolved:
+                log_status(f"Resolved Playsight media URL for {page_url}")
+                return resolved
+
+            if time.time() >= next_interaction_at:
+                click_playsight_play_controls(driver)
+                next_interaction_at = time.time() + 8
+
+            if not attempted_login and time.time() >= login_check_after:
+                if os.getenv("PLAYSIGHT_EMAIL") and os.getenv("PLAYSIGHT_PASSWORD"):
+                    log_status(
+                        "No media URL detected yet. Attempting optional Playsight login fallback."
+                    )
+                    sign_into_playsight_if_needed(driver, page_url)
+                attempted_login = True
             time.sleep(2)
     finally:
         driver.quit()
     log_status(f"No media URL found on Playsight page: {page_url}")
+    return None
+
+
+def click_track_tennis_play_controls(driver: Any) -> None:
+    from selenium.webdriver.common.by import By
+
+    play_locators = [
+        (By.XPATH, '//*[contains(@class, "vjs-big-play-button")]'),
+        (By.XPATH, '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+        (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+        (By.XPATH, '//*[@role="button" and contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+    ]
+
+    for by, selector in play_locators:
+        try:
+            elements = driver.find_elements(by, selector)
+        except Exception:
+            continue
+        for element in elements:
+            try:
+                driver.execute_script("arguments[0].click();", element)
+                return
+            except Exception:
+                continue
+
+
+def click_nusports_play_controls(driver: Any) -> None:
+    from selenium.webdriver.common.by import By
+
+    play_locators = [
+        (By.XPATH, '//*[contains(@class, "vjs-big-play-button")]'),
+        (By.XPATH, '//*[contains(@class, "play-button")]'),
+        (By.XPATH, '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+        (By.XPATH, '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+        (By.XPATH, '//*[@role="button" and contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "play")]'),
+    ]
+
+    for by, selector in play_locators:
+        try:
+            elements = driver.find_elements(by, selector)
+        except Exception:
+            continue
+        for element in elements:
+            try:
+                driver.execute_script("arguments[0].click();", element)
+                return
+            except Exception:
+                continue
+
+    try:
+        video_elements = driver.find_elements(By.TAG_NAME, "video")
+        if video_elements:
+            driver.execute_script(
+                "const v=arguments[0]; if(v && v.paused){v.play().catch(()=>{});} ",
+                video_elements[0],
+            )
+    except Exception:
+        pass
+
+
+def extract_media_url_with_nusports(page_url: str) -> str | None:
+    options = build_chrome_options(enable_performance_logs=True)
+    try:
+        driver = create_chrome_driver(options)
+    except Exception as exc:
+        log_status(f"Failed to start Chrome WebDriver for Northwestern stream: {exc}")
+        return None
+
+    try:
+        log_status(f"Opening Northwestern stream page: {page_url}")
+        driver.get(page_url)
+        deadline = time.time() + 60
+        next_interaction_at = time.time() + 3
+        while time.time() < deadline:
+            entries = driver.get_log("performance")
+            resolved = extract_media_url_from_performance_entries(entries)
+            if resolved:
+                log_status(f"Resolved Northwestern media URL for {page_url}")
+                return resolved
+
+            if time.time() >= next_interaction_at:
+                click_nusports_play_controls(driver)
+                next_interaction_at = time.time() + 8
+            time.sleep(2)
+    finally:
+        driver.quit()
+
+    log_status(f"No media URL found on Northwestern stream page: {page_url}")
+    return None
+
+
+def extract_media_url_with_fightingillini(page_url: str) -> str | None:
+    options = build_chrome_options(enable_performance_logs=True)
+    try:
+        driver = create_chrome_driver(options)
+    except Exception as exc:
+        log_status(f"Failed to start Chrome WebDriver for Illinois stream: {exc}")
+        return None
+
+    try:
+        log_status(f"Opening Illinois stream page: {page_url}")
+        driver.get(page_url)
+        deadline = time.time() + 60
+        next_interaction_at = time.time() + 3
+        while time.time() < deadline:
+            entries = driver.get_log("performance")
+            resolved = extract_media_url_from_performance_entries(entries)
+            if resolved:
+                log_status(f"Resolved Illinois media URL for {page_url}")
+                return resolved
+
+            if time.time() >= next_interaction_at:
+                click_nusports_play_controls(driver)
+                next_interaction_at = time.time() + 8
+            time.sleep(2)
+    finally:
+        driver.quit()
+
+    log_status(f"No media URL found on Illinois stream page: {page_url}")
+    return None
+
+
+def extract_media_url_with_track_tennis(page_url: str) -> str | None:
+    options = build_chrome_options(enable_performance_logs=True)
+    try:
+        driver = create_chrome_driver(options)
+    except Exception as exc:
+        log_status(f"Failed to start Chrome WebDriver for Track.Tennis: {exc}")
+        return None
+    try:
+        log_status(f"Opening Track.Tennis page: {page_url}")
+        driver.get(page_url)
+        deadline = time.time() + 60
+        next_click_at = time.time() + 3
+        while time.time() < deadline:
+            entries = driver.get_log("performance")
+            resolved = extract_media_url_from_performance_entries(entries)
+            if resolved:
+                log_status(f"Resolved Track.Tennis media URL for {page_url}")
+                return resolved
+
+            if time.time() >= next_click_at:
+                click_track_tennis_play_controls(driver)
+                next_click_at = time.time() + 8
+            time.sleep(2)
+    finally:
+        driver.quit()
+    log_status(f"No media URL found on Track.Tennis page: {page_url}")
     return None
 
 
@@ -1206,7 +1987,76 @@ def uniquify_stream_targets(targets: list[StreamTarget]) -> list[StreamTarget]:
     return unique_targets
 
 
-def resolve_stream_targets(page_url: str, config: dict[str, Any]) -> list[StreamTarget]:
+def extract_stream_target_filter(
+    match_id: str, config: dict[str, Any]
+) -> tuple[set[int], list[str]]:
+    override = config.get("match_overrides", {}).get(match_id, {})
+
+    requested_numbers: set[int] = set()
+    for value in override.get("include_stream_numbers", []):
+        try:
+            requested_numbers.add(int(value))
+        except (TypeError, ValueError):
+            continue
+
+    requested_label_substrings = [
+        normalize_text(str(value)).lower()
+        for value in override.get("include_stream_labels", [])
+        if normalize_text(str(value))
+    ]
+    return requested_numbers, requested_label_substrings
+
+
+def extract_event_title_filters(match_id: str, config: dict[str, Any]) -> list[str]:
+    override = config.get("match_overrides", {}).get(match_id, {})
+    raw = override.get("event_title_contains")
+    if raw is None:
+        return []
+
+    values: list[str]
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, list):
+        values = [str(item) for item in raw]
+    else:
+        return []
+
+    return [normalize_text(value) for value in values if normalize_text(value)]
+
+
+def label_matches_stream_filter(
+    label: str, requested_numbers: set[int], requested_label_substrings: list[str]
+) -> bool:
+    if not requested_numbers and not requested_label_substrings:
+        return True
+
+    normalized_label = normalize_text(label).lower()
+    label_numbers = {
+        int(match.group(1))
+        for match in re.finditer(r"\b(\d{1,3})\b", normalized_label)
+    }
+    number_match = bool(requested_numbers and label_numbers & requested_numbers)
+    label_match = bool(
+        requested_label_substrings
+        and any(token in normalized_label for token in requested_label_substrings)
+    )
+    return number_match or label_match
+
+
+def resolve_stream_targets(
+    page_url: str,
+    config: dict[str, Any],
+    requested_numbers: set[int] | None = None,
+    requested_label_substrings: list[str] | None = None,
+    event_title_filters: list[str] | None = None,
+) -> list[StreamTarget]:
+    requested_numbers = requested_numbers or set()
+    requested_label_substrings = requested_label_substrings or []
+    event_title_filters = [
+        normalize_text(token).lower()
+        for token in (event_title_filters or [])
+        if normalize_text(token)
+    ]
     if not page_url or page_url == MANUAL_STREAM_URL_REQUIRED:
         return []
 
@@ -1214,25 +2064,139 @@ def resolve_stream_targets(page_url: str, config: dict[str, Any]) -> list[Stream
         log_status(f"Using direct media URL: {page_url}")
         return [StreamTarget(label="Main Court", page_url=page_url, media_url=page_url)]
 
-    parsed_path = urlparse(page_url).path.lower()
+    if is_nusports_watch_url(page_url):
+        event_pages = extract_nusports_event_pages_with_selenium(
+            page_url, event_title_filters
+        )
+        if requested_numbers or requested_label_substrings:
+            event_pages = [
+                (label, event_page)
+                for label, event_page in event_pages
+                if label_matches_stream_filter(
+                    label, requested_numbers, requested_label_substrings
+                )
+            ]
+        if event_pages:
+            log_status(
+                f"Found {len(event_pages)} Northwestern event link(s) on {page_url}"
+            )
+            resolved_targets: list[StreamTarget] = []
+            for label, event_page in event_pages:
+                log_status(
+                    f"Resolving Northwestern event stream target {label}: {event_page}"
+                )
+                try:
+                    media_url = resolve_stream_url(event_page, config, depth=1)
+                except Exception as exc:
+                    log_status(
+                        f"Failed to resolve Northwestern target {label} ({event_page}): {exc}"
+                    )
+                    continue
+                if media_url:
+                    resolved_targets.append(
+                        StreamTarget(label=label, page_url=event_page, media_url=media_url)
+                    )
+            if resolved_targets:
+                log_status(
+                    f"Resolved {len(resolved_targets)} Northwestern stream target(s) from {page_url}"
+                )
+                return uniquify_stream_targets(resolved_targets)
+        log_status(f"No Northwestern event streams resolved from {page_url}")
+
+    if is_illinois_mten_stream_hub_url(page_url):
+        watch_pages = extract_fightingillini_watch_pages(page_url, config)
+        if requested_numbers or requested_label_substrings:
+            watch_pages = [
+                (label, watch_page)
+                for label, watch_page in watch_pages
+                if label_matches_stream_filter(
+                    label, requested_numbers, requested_label_substrings
+                )
+            ]
+        if watch_pages:
+            log_status(
+                f"Found {len(watch_pages)} Illinois Full Screen court link(s) on {page_url}"
+            )
+            resolved_targets: list[StreamTarget] = []
+            for label, watch_page in watch_pages:
+                log_status(
+                    f"Resolving Illinois stream target {label}: {watch_page}"
+                )
+                try:
+                    media_url = resolve_stream_url(watch_page, config, depth=1)
+                except Exception as exc:
+                    log_status(
+                        f"Failed to resolve Illinois target {label} ({watch_page}): {exc}"
+                    )
+                    continue
+                if media_url:
+                    resolved_targets.append(
+                        StreamTarget(label=label, page_url=watch_page, media_url=media_url)
+                    )
+            if resolved_targets:
+                log_status(
+                    f"Resolved {len(resolved_targets)} Illinois stream target(s) from {page_url}"
+                )
+                return uniquify_stream_targets(resolved_targets)
+            log_status(
+                f"Illinois Full Screen links were found but no live media URLs are available yet on {page_url}"
+            )
+        else:
+            log_status(
+                f"No Illinois Full Screen court links were detected on {page_url}"
+            )
+
+    parsed_page = parse_url_or_none(page_url)
+    parsed_path = parsed_page.path.lower() if parsed_page else ""
+    if is_track_tennis_url(page_url):
+        log_status(f"Resolving Track.Tennis page: {page_url}")
+        resolved = resolve_stream_url(page_url, config)
+        if resolved:
+            label = "Main Court"
+            if not label_matches_stream_filter(
+                label, requested_numbers, requested_label_substrings
+            ):
+                log_status("Track.Tennis target skipped by stream target filters.")
+                return []
+            log_status(f"Resolved Track.Tennis target {label}: {page_url}")
+            return [StreamTarget(label=label, page_url=page_url, media_url=resolved)]
+        log_status(f"Track.Tennis page did not yield media URL yet: {page_url}")
+
     if is_playsight_url(page_url) and ("/live/" in parsed_path or "/livestreaming/" in parsed_path):
         log_status(f"Resolving direct Playsight court page first: {page_url}")
         resolved = resolve_stream_url(page_url, config)
         if resolved:
             label = extract_court_label(page_url, "Main Court")
+            if not label_matches_stream_filter(
+                label, requested_numbers, requested_label_substrings
+            ):
+                log_status(
+                    f"Direct Playsight target {label} skipped by stream target filters."
+                )
+                return []
             log_status(f"Resolved direct Playsight target {label}: {page_url}")
             return [StreamTarget(label=label, page_url=page_url, media_url=resolved)]
         log_status(f"Direct Playsight page did not yield media URL yet: {page_url}")
 
-    embedded_facility_pages = extract_embedded_playsight_facility_pages(
-        page_url, config
-    )
+    embedded_facility_pages: list[str] = []
+    if not is_playsight_url(page_url):
+        embedded_facility_pages = extract_embedded_playsight_facility_pages(
+            page_url, config
+        )
     if embedded_facility_pages:
         log_status(
             f"Found {len(embedded_facility_pages)} embedded Playsight facility link(s) on {page_url}"
         )
         for facility_page in embedded_facility_pages:
             watch_pages = extract_playsight_watch_pages(facility_page, config)
+            if requested_numbers or requested_label_substrings:
+                watch_pages = [
+                    (label, watch_page)
+                    for label, watch_page in watch_pages
+                    if label_matches_stream_filter(
+                        label, requested_numbers, requested_label_substrings
+                    )
+                ]
             if not watch_pages:
                 continue
             log_status(
@@ -1241,7 +2205,13 @@ def resolve_stream_targets(page_url: str, config: dict[str, Any]) -> list[Stream
             resolved_targets: list[StreamTarget] = []
             for label, watch_page in watch_pages:
                 log_status(f"Resolving Playsight watch page {label}: {watch_page}")
-                media_url = resolve_stream_url(watch_page, config, depth=1)
+                try:
+                    media_url = resolve_stream_url(watch_page, config, depth=1)
+                except Exception as exc:
+                    log_status(
+                        f"Failed to resolve watch page {label} ({watch_page}): {exc}"
+                    )
+                    continue
                 if media_url:
                     resolved_targets.append(
                         StreamTarget(label=label, page_url=watch_page, media_url=media_url)
@@ -1253,6 +2223,14 @@ def resolve_stream_targets(page_url: str, config: dict[str, Any]) -> list[Stream
                 return uniquify_stream_targets(resolved_targets)
 
     embedded_targets = extract_embedded_stream_targets(page_url, config)
+    if requested_numbers or requested_label_substrings:
+        embedded_targets = [
+            (label, watch_page)
+            for label, watch_page in embedded_targets
+            if label_matches_stream_filter(
+                label, requested_numbers, requested_label_substrings
+            )
+        ]
     if embedded_targets:
         log_status(
             f"Found {len(embedded_targets)} embedded Playsight court links on {page_url}"
@@ -1260,7 +2238,13 @@ def resolve_stream_targets(page_url: str, config: dict[str, Any]) -> list[Stream
         resolved_targets: list[StreamTarget] = []
         for label, watch_page in embedded_targets:
             log_status(f"Resolving embedded stream target {label}: {watch_page}")
-            media_url = resolve_stream_url(watch_page, config, depth=1)
+            try:
+                media_url = resolve_stream_url(watch_page, config, depth=1)
+            except Exception as exc:
+                log_status(
+                    f"Failed to resolve embedded target {label} ({watch_page}): {exc}"
+                )
+                continue
             if media_url:
                 resolved_targets.append(
                     StreamTarget(label=label, page_url=watch_page, media_url=media_url)
@@ -1271,12 +2255,26 @@ def resolve_stream_targets(page_url: str, config: dict[str, Any]) -> list[Stream
 
     if is_playsight_facility_or_multi_page(page_url):
         watch_pages = extract_playsight_watch_pages(page_url, config)
+        if requested_numbers or requested_label_substrings:
+            watch_pages = [
+                (label, watch_page)
+                for label, watch_page in watch_pages
+                if label_matches_stream_filter(
+                    label, requested_numbers, requested_label_substrings
+                )
+            ]
         if watch_pages:
             log_status(f"Found {len(watch_pages)} Playsight watch page(s) on {page_url}")
             resolved_targets: list[StreamTarget] = []
             for label, watch_page in watch_pages:
                 log_status(f"Resolving Playsight watch page {label}: {watch_page}")
-                media_url = resolve_stream_url(watch_page, config, depth=1)
+                try:
+                    media_url = resolve_stream_url(watch_page, config, depth=1)
+                except Exception as exc:
+                    log_status(
+                        f"Failed to resolve watch page {label} ({watch_page}): {exc}"
+                    )
+                    continue
                 if media_url:
                     resolved_targets.append(
                         StreamTarget(
@@ -1303,29 +2301,106 @@ def resolve_stream_url(page_url: str, config: dict[str, Any], depth: int = 0) ->
         return None
 
     lowered = page_url.lower()
+    playsight_intent = is_playsight_intent_url(page_url)
+    track_tennis_intent = "track.tennis" in lowered
+    nusports_intent = is_nusports_url(page_url)
+    fightingillini_intent = is_fightingillini_url(page_url)
     if lowered.endswith(DIRECT_STREAM_SUFFIXES):
         return page_url
 
-    path = urlparse(page_url).path.lower()
-    if is_playsight_url(page_url) and ("/live/" in path or "/livestreaming/" in path):
-        resolved = extract_media_url_with_playsight(page_url)
+    parsed = parse_url_or_none(page_url)
+    if parsed is None or parsed.scheme not in {"http", "https"}:
+        return None
+    path = parsed.path.lower() if parsed else ""
+    if is_track_tennis_url(page_url):
+        return extract_media_url_with_track_tennis(page_url)
+    if is_nusports_watch_url(page_url):
+        return None
+    if is_illinois_mten_stream_hub_url(page_url):
+        return None
+    if is_fightingillini_watch_url(page_url):
+        if fightingillini_watch_page_unavailable(page_url, config):
+            return None
+        resolved = extract_media_url_with_fightingillini(page_url)
         if resolved:
             return resolved
+        live_id = extract_live_query_id(page_url)
+        if live_id:
+            embed_url = build_fightingillini_embed_url(live_id)
+            return extract_media_url_with_fightingillini(embed_url)
+        return None
+    if is_fightingillini_embed_url(page_url):
+        return extract_media_url_with_fightingillini(page_url)
+    if nusports_intent:
+        resolved = extract_media_url_with_nusports(page_url)
+        if resolved:
+            return resolved
+    if is_playsight_url(page_url) and ("/live/" in path or "/livestreaming/" in path):
+        return extract_media_url_with_playsight(page_url)
 
     embedded_links = fetch_page_links(page_url, config)
+    if playsight_intent:
+        playsight_links = []
+        for link in embedded_links:
+            if not is_playsight_url(link):
+                continue
+            parsed_link = parse_url_or_none(link)
+            if parsed_link is None:
+                continue
+            link_path = parsed_link.path.lower()
+            if (
+                "/live/" not in link_path
+                and "/livestreaming/" not in link_path
+                and "/facility/" not in link_path
+            ):
+                continue
+            playsight_links.append(link)
+        if playsight_links:
+            embedded_links = playsight_links
+        else:
+            embedded_links = [
+                link
+                for link in embedded_links
+                if "youtube.com" not in link.lower() and "youtu.be" not in link.lower()
+            ]
+    if track_tennis_intent:
+        track_links = [link for link in embedded_links if "track.tennis" in link.lower()]
+        if track_links:
+            embedded_links = track_links
+    if nusports_intent:
+        nusports_links = [link for link in embedded_links if is_nusports_url(link)]
+        if nusports_links:
+            embedded_links = nusports_links
+    if fightingillini_intent:
+        fightingillini_links = [
+            link for link in embedded_links if is_fightingillini_url(link)
+        ]
+        if fightingillini_links:
+            embedded_links = fightingillini_links
     for embedded_link in embedded_links:
-        resolved = resolve_stream_url(embedded_link, config, depth + 1)
+        try:
+            resolved = resolve_stream_url(embedded_link, config, depth + 1)
+        except Exception:
+            continue
         if resolved:
             return resolved
 
     for resolver in (
         lambda: extract_media_url_with_requests(page_url, config),
-        lambda: None if is_playsight_url(page_url) else extract_media_url_with_yt_dlp(page_url),
+        lambda: None
+        if (
+            is_playsight_url(page_url)
+            or playsight_intent
+            or track_tennis_intent
+            or nusports_intent
+            or fightingillini_intent
+        )
+        else extract_media_url_with_yt_dlp(page_url),
     ):
         resolved = resolver()
         if resolved:
             return resolved
-    if "playsight" in lowered:
+    if is_playsight_url(page_url):
         return extract_media_url_with_playsight(page_url)
     return None
 
@@ -1348,6 +2423,28 @@ def wait_for_live_streams(match: MatchRecord, config: dict[str, Any]) -> list[St
     now = datetime.now(ZoneInfo(match.timezone))
     start_dt = match.start_datetime().astimezone(ZoneInfo(match.timezone))
     window_start = start_dt - timedelta(minutes=config["lead_time_minutes"])
+    requested_numbers, requested_label_substrings = extract_stream_target_filter(
+        match.match_id, config
+    )
+    event_title_filters = extract_event_title_filters(match.match_id, config)
+    if requested_numbers or requested_label_substrings:
+        filter_summary: list[str] = []
+        if requested_numbers:
+            filter_summary.append(
+                "numbers=" + ",".join(str(number) for number in sorted(requested_numbers))
+            )
+        if requested_label_substrings:
+            filter_summary.append(
+                "labels=" + ",".join(requested_label_substrings)
+            )
+        log_status(
+            f"Applying stream target filter for {match.match_id}: {'; '.join(filter_summary)}"
+        )
+    if event_title_filters:
+        log_status(
+            "Applying event title filter for "
+            f"{match.match_id}: {', '.join(event_title_filters)}"
+        )
     log_status(
         f"Preparing recording for {match.match_id} ({match.title}) scheduled at {start_dt.isoformat()}"
     )
@@ -1361,13 +2458,26 @@ def wait_for_live_streams(match: MatchRecord, config: dict[str, Any]) -> list[St
             time.sleep(seconds_until_start)
 
     deadline = start_dt + timedelta(minutes=config["stream_retry_minutes"])
+    now = datetime.now(ZoneInfo(match.timezone))
+    if now > deadline:
+        log_status(
+            "Recorder started after the scheduled retry window "
+            f"(current: {now.isoformat()}, deadline: {deadline.isoformat()}). "
+            f"Extending polling by {config['stream_retry_minutes']} minutes from now."
+        )
+        deadline = now + timedelta(minutes=config["stream_retry_minutes"])
     attempt = 1
     while datetime.now(ZoneInfo(match.timezone)) <= deadline:
         log_status(
             f"Polling for live stream targets (attempt {attempt}) from {match.stream_page_url}"
         )
         resolved_targets = resolve_stream_targets(
-            match.stream_page_url or "", config)
+            match.stream_page_url or "",
+            config,
+            requested_numbers=requested_numbers,
+            requested_label_substrings=requested_label_substrings,
+            event_title_filters=event_title_filters,
+        )
         if resolved_targets:
             labels = ", ".join(target.label for target in resolved_targets)
             log_status(
@@ -1383,6 +2493,35 @@ def wait_for_live_streams(match: MatchRecord, config: dict[str, Any]) -> list[St
     raise RuntimeError(
         f"Unable to resolve a live stream for {match.match_id} before {deadline.isoformat()}."
     )
+
+
+def apply_stream_target_filters(
+    match_id: str, targets: list[StreamTarget], config: dict[str, Any]
+) -> list[StreamTarget]:
+    requested_numbers, requested_label_substrings = extract_stream_target_filter(
+        match_id, config
+    )
+
+    if not requested_numbers and not requested_label_substrings:
+        return targets
+
+    filtered: list[StreamTarget] = []
+    for target in targets:
+        if label_matches_stream_filter(
+            target.label, requested_numbers, requested_label_substrings
+        ):
+            filtered.append(target)
+
+    if not filtered:
+        available_labels = ", ".join(target.label for target in targets) or "(none)"
+        raise RuntimeError(
+            f"Stream target filters for {match_id} matched nothing. "
+            f"Available targets: {available_labels}"
+        )
+
+    selected_labels = ", ".join(target.label for target in filtered)
+    log_status(f"Applied stream target filters for {match_id}. Keeping: {selected_labels}")
+    return filtered
 
 
 def build_ffmpeg_command(
@@ -1511,6 +2650,7 @@ def record_match(config_path: Path, match_id: str) -> list[Path]:
 
     log_status(f"Using stream page URL for {match_id}: {selected.stream_page_url}")
     stream_targets = wait_for_live_streams(selected, config)
+    stream_targets = apply_stream_target_filters(match_id, stream_targets, config)
     recordings = record_stream_targets(selected, stream_targets, config)
     output_paths: list[Path] = []
     for target, output_path in recordings:
