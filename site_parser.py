@@ -217,7 +217,7 @@ def extract_urls_from_text(value: str) -> list[str]:
     normalized = value.replace("\\/", "/")
     urls: list[str] = []
     for raw in GENERIC_URL_PATTERN.findall(normalized):
-        cleaned = raw.strip(" \t\r\n'\"),;")
+        cleaned = raw.strip(" \t\r\n'\"),;\\")
         if cleaned.startswith("//"):
             cleaned = f"https:{cleaned}"
         if cleaned:
@@ -1093,7 +1093,7 @@ def extract_playsight_candidates(
         absolute = join_url_or_none(page_url, raw_url.strip())
         if not absolute:
             return
-        absolute = absolute.strip()
+        absolute = absolute.strip().rstrip("\\")
         if not absolute or absolute in seen_urls:
             return
         if not is_navigable_page_url(absolute):
@@ -1125,8 +1125,8 @@ def extract_playsight_candidates(
         soup = BeautifulSoup(html, "html.parser")
         default_label = extract_court_label(soup.get_text(" ", strip=True), "Main Court")
 
-        for tag in soup.find_all(True):
-            label_hint = normalize_text(
+        def build_label_hint(tag: Any) -> str:
+            hint = normalize_text(
                 " ".join(
                     value
                     for value in (
@@ -1139,6 +1139,22 @@ def extract_playsight_candidates(
                     if isinstance(value, str) and normalize_text(value)
                 )
             )
+            if hint:
+                return hint
+
+            current = getattr(tag, "parent", None)
+            for _ in range(5):
+                if current is None:
+                    break
+                snippet = normalize_text(current.get_text(" ", strip=True))
+                match = re.search(r"\bCourt\s*0*(\d+)\b", snippet, re.IGNORECASE)
+                if match:
+                    return f"Court {match.group(1)}"
+                current = getattr(current, "parent", None)
+            return ""
+
+        for tag in soup.find_all(True):
+            label_hint = build_label_hint(tag)
             for attribute_key, attribute_value in tag.attrs.items():
                 if not isinstance(attribute_value, str):
                     continue
@@ -1166,6 +1182,14 @@ def extract_playsight_candidates(
             fetched_html,
             allow_full_scan=not is_playsight_url(page_url),
         )
+        # Some school sites hydrate stream iframes client-side; retry with rendered HTML
+        # when static HTML produced no PlaySight candidates.
+        if not candidates and not is_playsight_url(page_url):
+            try:
+                rendered_html = fetch_html(page_url, config, rendered=True)
+                collect_from_html(rendered_html, allow_full_scan=True)
+            except Exception:
+                pass
     else:
         try:
             rendered_html = fetch_html(page_url, config, rendered=True)
@@ -1538,7 +1562,28 @@ def extract_embedded_stream_targets(
     page_url: str, config: dict[str, Any]
 ) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
-    seen_urls: set[str] = set()
+    candidate_index_by_key: dict[str, int] = {}
+
+    def playsight_livestream_key(url: str) -> str:
+        parsed = parse_url_or_none(url)
+        if parsed is None:
+            return url
+        match = re.search(r"/livestreaming/([a-z0-9]+)/", parsed.path, re.IGNORECASE)
+        if match:
+            return f"playsight-livestream:{match.group(1).lower()}"
+        return url
+
+    def is_court_label(label: str) -> bool:
+        return re.search(r"\bCourt\s*0*\d+\b", normalize_text(label), re.IGNORECASE) is not None
+
+    def should_replace_label(current: str, candidate: str) -> bool:
+        current_text = normalize_text(current).lower()
+        candidate_text = normalize_text(candidate).lower()
+        if is_court_label(candidate) and not is_court_label(current):
+            return True
+        if "full screen" in current_text and "full screen" not in candidate_text:
+            return True
+        return False
 
     for label, href in extract_playsight_candidates(page_url, config):
         parsed_href = parse_url_or_none(href)
@@ -1547,10 +1592,15 @@ def extract_embedded_stream_targets(
         path = parsed_href.path.lower()
         if "/live/" not in path and "/livestreaming/" not in path:
             continue
-        if href in seen_urls:
+        key = playsight_livestream_key(href)
+        existing_index = candidate_index_by_key.get(key)
+        if existing_index is not None:
+            existing_label, existing_href = candidates[existing_index]
+            if should_replace_label(existing_label, label):
+                candidates[existing_index] = (label, href)
             continue
+        candidate_index_by_key[key] = len(candidates)
         candidates.append((label, href))
-        seen_urls.add(href)
 
     return candidates
 
@@ -1731,10 +1781,13 @@ def extract_media_url_from_performance_entries(entries: list[dict[str, Any]]) ->
         try:
             message = json.loads(entry["message"])
             inner = message.get("message", {})
-            if inner.get("method") != "Network.responseReceived":
-                continue
-            response = inner.get("params", {}).get("response", {})
-            url = response.get("url", "")
+            method = inner.get("method", "")
+            params = inner.get("params", {})
+            url = ""
+            if method == "Network.responseReceived":
+                url = params.get("response", {}).get("url", "")
+            elif method == "Network.requestWillBeSent":
+                url = params.get("request", {}).get("url", "")
             if ".m3u8" in url or ".mpd" in url or ".mp4" in url:
                 return url
         except Exception:
@@ -1747,6 +1800,51 @@ def extract_media_url_from_performance_entries(entries: list[dict[str, Any]]) ->
         )
         if media_match:
             return media_match.group(0)
+    return None
+
+
+def extract_media_url_from_driver_state(driver: Any) -> str | None:
+    media_candidates = []
+    media_match_pattern = r"(https?:[^\"'\\s<>]+\\.(?:m3u8|mpd|mp4)[^\"'\\s<>]*)"
+
+    try:
+        resources = driver.execute_script(
+            """
+            const urls = [];
+            try {
+                window.performance.getEntriesByType('resource')
+                    .forEach((entry) => entry && entry.name && urls.push(entry.name));
+            } catch (error) {}
+            document.querySelectorAll('video, source').forEach((el) => {
+                if (el.src) urls.push(el.src);
+                if (el.currentSrc) urls.push(el.currentSrc);
+                if (el.dataset && el.dataset.src) urls.push(el.dataset.src);
+                if (el.getAttribute) {
+                    const srcset = el.getAttribute('srcset');
+                    if (srcset) urls.push(srcset);
+                }
+            });
+            return urls;
+            """
+        )
+        if resources:
+            media_candidates.extend(resources)
+    except Exception:
+        pass
+
+    try:
+        page_source = driver.page_source or ""
+        matches = re.findall(media_match_pattern, page_source, re.IGNORECASE)
+        media_candidates.extend(matches)
+    except Exception:
+        pass
+
+    for raw_url in reversed(media_candidates):
+        if not raw_url or not isinstance(raw_url, str):
+            continue
+        url = raw_url.strip()
+        if ".m3u8" in url.lower() or ".mpd" in url.lower() or ".mp4" in url.lower():
+            return url
     return None
 
 
@@ -1803,6 +1901,10 @@ def extract_media_url_with_playsight(page_url: str) -> str | None:
             resolved = extract_media_url_from_performance_entries(entries)
             if resolved:
                 log_status(f"Resolved Playsight media URL for {page_url}")
+                return resolved
+            resolved = extract_media_url_from_driver_state(driver)
+            if resolved:
+                log_status(f"Resolved Playsight media URL from page state for {page_url}")
                 return resolved
 
             if time.time() >= next_interaction_at:
@@ -2005,6 +2107,25 @@ def extract_stream_target_filter(
         if normalize_text(str(value))
     ]
     return requested_numbers, requested_label_substrings
+
+
+def apply_runtime_stream_target_filter(
+    config: dict[str, Any],
+    match_id: str,
+    stream_numbers: list[int] | None = None,
+    stream_labels: list[str] | None = None,
+) -> dict[str, Any]:
+    stream_numbers = stream_numbers or []
+    stream_labels = [label for label in (stream_labels or []) if normalize_text(label)]
+    if not stream_numbers and not stream_labels:
+        return config
+
+    updated_config = copy.deepcopy(config)
+    override = dict(updated_config.setdefault("match_overrides", {}).get(match_id, {}))
+    override["include_stream_numbers"] = list(dict.fromkeys(stream_numbers))
+    override["include_stream_labels"] = list(dict.fromkeys(stream_labels))
+    updated_config["match_overrides"][match_id] = override
+    return updated_config
 
 
 def extract_event_title_filters(match_id: str, config: dict[str, Any]) -> list[str]:
@@ -2336,7 +2457,10 @@ def resolve_stream_url(page_url: str, config: dict[str, Any], depth: int = 0) ->
         if resolved:
             return resolved
     if is_playsight_url(page_url) and ("/live/" in path or "/livestreaming/" in path):
-        return extract_media_url_with_playsight(page_url)
+        resolved = extract_media_url_with_playsight(page_url)
+        if resolved:
+            return resolved
+        return extract_media_url_with_yt_dlp(page_url)
 
     embedded_links = fetch_page_links(page_url, config)
     if playsight_intent:
@@ -2401,7 +2525,10 @@ def resolve_stream_url(page_url: str, config: dict[str, Any], depth: int = 0) ->
         if resolved:
             return resolved
     if is_playsight_url(page_url):
-        return extract_media_url_with_playsight(page_url)
+        resolved = extract_media_url_with_playsight(page_url)
+        if resolved:
+            return resolved
+        return extract_media_url_with_yt_dlp(page_url)
     return None
 
 
@@ -2633,7 +2760,12 @@ def maybe_upload_to_youtube(
     log_status(f"YouTube upload complete: {output_path}")
 
 
-def record_match(config_path: Path, match_id: str) -> list[Path]:
+def record_match(
+    config_path: Path,
+    match_id: str,
+    stream_numbers: list[int] | None = None,
+    stream_labels: list[str] | None = None,
+) -> list[Path]:
     config = load_config(config_path)
     matches = load_catalog(config)
     if not matches:
@@ -2648,6 +2780,12 @@ def record_match(config_path: Path, match_id: str) -> list[Path]:
             f"{match_id} still needs a stream page URL. Add it under match_overrides in the config."
         )
 
+    config = apply_runtime_stream_target_filter(
+        config,
+        match_id,
+        stream_numbers=stream_numbers,
+        stream_labels=stream_labels,
+    )
     log_status(f"Using stream page URL for {match_id}: {selected.stream_page_url}")
     stream_targets = wait_for_live_streams(selected, config)
     stream_targets = apply_stream_target_filters(match_id, stream_targets, config)
@@ -2755,6 +2893,19 @@ def parse_args() -> argparse.Namespace:
     record_parser = subparsers.add_parser(
         "record", help="Record a single match by match id.")
     record_parser.add_argument("--match-id", required=True)
+    record_parser.add_argument(
+        "--stream-number",
+        action="append",
+        dest="stream_numbers",
+        type=int,
+        help="Restrict the recording to a specific resolved court/stream number. May be repeated.",
+    )
+    record_parser.add_argument(
+        "--stream-label",
+        action="append",
+        dest="stream_labels",
+        help="Restrict the recording to stream labels containing this text. May be repeated.",
+    )
 
     subparsers.add_parser(
         "schedule-jobs",
@@ -2782,7 +2933,12 @@ def main() -> int:
             return 0
 
         if args.command == "record":
-            output_paths = record_match(config_path, args.match_id)
+            output_paths = record_match(
+                config_path,
+                args.match_id,
+                stream_numbers=args.stream_numbers,
+                stream_labels=args.stream_labels,
+            )
             for output_path in output_paths:
                 print(f"Recording saved to {output_path}")
             return 0

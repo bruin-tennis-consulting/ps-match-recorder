@@ -67,6 +67,12 @@ That Arizona stream page links to Playsight at `https://web.playsight.com/live/u
 python3 site_parser.py --config config/bigten_recorder.json record --match-id 2026-03-03_michigan-state-vs-arizona
 ```
 
+To target a single court from a multi-court page for one run:
+
+```bash
+python3 site_parser.py --config config/bigten_recorder.json record --match-id 2026-03-13_michigan-vs-ohio-state --stream-number 1
+```
+
 The recorder:
 
 - waits until the lead window opens

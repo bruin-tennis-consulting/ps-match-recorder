@@ -112,6 +112,46 @@
         "Parser resolves court-specific Full Screen links and records courts once they go live."
       ]
     },
+    "2026-03-11_dayton-vs-penn-state": {
+      "stream_page_url": "https://web.playsight.com/facility/penn-state-university-tennis/home",
+      "notes": [
+        "Penn State home matches are hosted from this PlaySight facility page."
+      ]
+    },
+    "2026-03-13_michigan-state-vs-penn-state": {
+      "stream_page_url": "https://web.playsight.com/facility/penn-state-university-tennis/home",
+      "notes": [
+        "Penn State home matches are hosted from this PlaySight facility page."
+      ]
+    },
+    "2026-03-13_northwestern-vs-wisconsin": {
+      "stream_page_url": "https://uwbadgers.com/sports/2016/11/1/tennis-video-streams?id=1239",
+      "notes": [
+        "Wisconsin home men's tennis matches are streamed from this Badgers page.",
+        "Page embeds six PlaySight court iframes; parser resolves each court livestream target."
+      ]
+    },
+    "2026-03-13_illinois-vs-nebraska": {
+      "stream_page_url": "https://huskers.com/mens-tennis-live-video#court1",
+      "notes": [
+        "Nebraska home men's tennis matches are streamed from the Huskers live video page.",
+        "Page embeds six PlaySight court players and Full Screen links; parser deduplicates variants and records one stream per court."
+      ]
+    },
+    "2026-03-15_illinois-vs-wisconsin": {
+      "stream_page_url": "https://uwbadgers.com/sports/2016/11/1/tennis-video-streams?id=1239",
+      "notes": [
+        "Wisconsin home men's tennis matches are streamed from this Badgers page.",
+        "Page embeds six PlaySight court iframes; parser resolves each court livestream target."
+      ]
+    },
+    "2026-03-15_northwestern-vs-nebraska": {
+      "stream_page_url": "https://huskers.com/mens-tennis-live-video#court1",
+      "notes": [
+        "Nebraska home men's tennis matches are streamed from the Huskers live video page.",
+        "Page embeds six PlaySight court players and Full Screen links; parser deduplicates variants and records one stream per court."
+      ]
+    },
     "2026-03-20_michigan-vs-illinois": {
       "stream_page_url": "https://fightingillini.com/sports/2016/1/14/mtennis_livestatsvideo",
       "notes": [
